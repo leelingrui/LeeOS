@@ -1,0 +1,6 @@
+/target
+build
+.vscode
+*.img
+*.log
+*.wav
