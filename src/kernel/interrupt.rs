@@ -1,13 +1,40 @@
 use core::{arch::{asm, global_asm}, default, fmt};
 use bitfield::{bitfield, size_of};
 
-use crate::printk;
+use crate::{printk, kernel::io::inb, logk};
 
 const PIC_M_CTRL : u16 = 0x20; // 主片的控制端口
 const PIC_M_DATA : u16 =  0x21; // 主片的数据端口
 const PIC_S_CTRL : u16 =  0xa0; // 从片的控制端口
 const PIC_S_DATA : u16 =  0xa1; // 从片的数据端口
 const PIC_EOI : u8 =  0x20;    // 通知中断控制器中断结束
+// 主片初始向量号
+const IRQ_MASTER_NR : u8 = 0x20;
+
+
+pub const INTR_DE : u64 = 0;   // 除零错误
+pub const INTR_DB : u64 = 1;   // 调试
+pub const INTR_NMI : u64 = 2;  // 不可屏蔽中断
+pub const INTR_BP : u64 = 3;   // 断点
+pub const INTR_OF : u64 = 4;   // 溢出
+pub const INTR_BR : u64 = 5;   // 越界
+pub const INTR_UD : u64 = 6;   // 指令无效
+pub const INTR_NM : u64 = 7;   // 协处理器不可用
+pub const INTR_DF : u64 = 8;   // 双重错误
+pub const INTR_OVER : u64 = 9; // 协处理器段超限
+pub const INTR_TS : u64 = 10;  // 无效任务状态段
+pub const INTR_NP : u64 = 11;  // 段无效
+pub const INTR_SS : u64 = 12;  // 栈段错误
+pub const INTR_GP : u64 = 13;  // 一般性保护异常
+pub const INTR_PF : u64 = 14;  // 缺页错误
+pub const INTR_RE1 : u64 = 15; // 保留
+pub const INTR_MF : u64 = 16;  // 浮点异常
+pub const INTR_AC : u64 = 17;  // 对齐检测
+pub const INTR_MC : u64 = 18;  // 机器检测
+pub const INTR_XM : u64 = 19;  // SIMD 浮点异常
+pub const INTR_VE : u64 = 20;  // 虚拟化异常
+pub const INTR_CP : u64 = 21;  // 控制保护异常
+
 
 const FAULT_MESSAGES : [&str; 22] = [
     "#DE Divide Error",
@@ -39,16 +66,16 @@ const IDT_SIZE : usize = 0x100;
 static mut IDT : [DescriptorT; IDT_SIZE] = [DescriptorT(0); IDT_SIZE];
 #[no_mangle]
 static mut IDT_PTR : PointerT = PointerT{ base: 0, limit: 0 };
-const SYS_CALL_RESERVED_SIZE : usize = 16;
-type HandlerFn = *const extern fn();
+const SYS_CALL_RESERVED_SIZE : usize = 0x30;
+pub type HandlerFn = *mut extern fn();
 #[no_mangle]
-pub static mut HANDLER_TABLE : [HandlerFn; IDT_SIZE] = [core::ptr::null(); IDT_SIZE];
+pub static mut HANDLER_TABLE : [HandlerFn; IDT_SIZE] = [core::ptr::null_mut(); IDT_SIZE];
 extern
 {
     static mut handler_entry_table : [HandlerFn; IDT_SIZE];
 }
 
-global_asm!(include_str!("./interupt.asm"));
+global_asm!(include_str!("interrupt.asm"));
 
 bitfield!
 {
@@ -69,7 +96,7 @@ bitfield!
 impl fmt::Display for DescriptorT {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "offset low: {:#4x};\nselector: {:#16b};\ntype: {:#5b};\ndpl: {:#2b};\npresent: {:#};\noffset high: {:#4x};",
-    self.get_low_offset(), self.get_selector(), self.get_type(), self.get_dpl(), self.get_present(), self.get_high_offset())
+            self.get_low_offset(), self.get_selector(), self.get_type(), self.get_dpl(), self.get_present(), self.get_high_offset())
     }
 }
 
@@ -132,18 +159,46 @@ struct PtRegs
 }
 fn default_handler(vector : u32)
 {
-    printk!("[{}] default interrupt called...\n", vector);
+    logk!("[{}] default interrupt called...\n", vector);
     send_eoi(vector);
 }
 
-pub fn regist_irq(irq_func : *const extern fn(), interrupt_no : u8)
+pub fn set_interrupt_handler(irq_func : HandlerFn, interrupt_no : u8)
 {
     unsafe {
         HANDLER_TABLE[interrupt_no as usize] = irq_func;
     }
 }
 
-fn send_eoi(vector : u32)
+pub fn regist_irq(irq_func : HandlerFn, interrupt_no : u8)
+{
+    unsafe {
+        assert!(interrupt_no < 0x10);
+        HANDLER_TABLE[(IRQ_MASTER_NR + interrupt_no) as usize] = irq_func;
+    }
+}
+
+pub fn set_interrupt_mask(interrupt_no : u32, enable : bool)
+{
+    assert!(interrupt_no < 0x10);
+    let port;
+    if interrupt_no < 8
+    {
+        port = PIC_M_DATA;
+    }
+    else {
+        port = PIC_S_DATA;
+    }
+    if enable
+    {
+        outb(port, inb(port) & !(1 << interrupt_no));
+    }
+    else {
+        outb(port, inb(port) | (1 << interrupt_no));
+    }
+}
+
+pub fn send_eoi(vector : u32)
 {
     if vector >= 0x20 && vector < 0x28
     {
@@ -185,7 +240,7 @@ fn exception_handler(vector : u32)
     {
         message = FAULT_MESSAGES[vector as usize];
     }
-    printk!("\nEXCEPTION{}\n", message);
+    printk!("EXCEPTION {}\n", message);
 }
 
 fn idt_init()
@@ -199,15 +254,17 @@ fn idt_init()
             var += 1;
         }
         var = 0;
-        while var < 0x20 {
-            regist_irq(exception_handler as *const extern fn(), var as u8);
+        while var < 0x30 {
+            set_interrupt_handler(exception_handler as HandlerFn, var as u8);
             var += 1;
         }
         IDT[80].descriptor_init(default_handler as u64, 1 << 3, 0b1110, 0, true);
         IDT_PTR.base = IDT.as_ptr() as u64;
         IDT_PTR.limit = (IDT_SIZE * 16 - 1) as u16;
-        asm!("lidt [IDT_PTR]");
-        set_interrupt_state(true);
+        asm!(
+            "lidt [{idt_ptr}]",
+            idt_ptr = in(reg) &IDT_PTR as *const PointerT as u64
+        );
     }
 }
 
@@ -222,7 +279,7 @@ pub fn interrupt_disable() -> bool
             "pop rax",
             out("rax") interrupt_status
         );
-        interrupt_status & 0x20 != 0
+        interrupt_status & 0x200 != 0
     }
 }
 
@@ -252,11 +309,10 @@ pub fn get_interrupt_state() -> bool
     unsafe
     {
         asm!(
-            "pushf
-            pop rax
-            test rax, 0x100",
-            out("rax") result
+            "pushf",
+            "pop {flag}",
+            flag = out(reg) result
         )
     }
-    return  result != 0;
+    return  result & 0x200 != 0;
 }

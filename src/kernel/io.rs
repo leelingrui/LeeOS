@@ -1,6 +1,6 @@
 use core::arch::asm;
 
-use super::interupt;
+use super::interrupt;
 use super::semaphore;
 use super::io;
 

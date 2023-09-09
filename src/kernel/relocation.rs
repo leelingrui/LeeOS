@@ -1,11 +1,14 @@
 use super::io::{self, IdeCtrlT};
+use core::arch::asm;
 use super::string::memset;
 use core::ffi::c_char;
 use core::mem::size_of;
 const SHF_ALLOC : u64 = 0b10;
 const EI_NIDENT : usize = 0x10;
 
-#[repr(align(1))]
+pub static mut KERNEL_SIZE : usize = 0;
+
+#[repr(packed)]
 #[repr(C)]
 pub struct Elf64Ehdr
 {
@@ -76,7 +79,7 @@ unsafe fn system_relocate64(elf64_shdr : *mut Elf64Shdr)
         {
             match (*reloc_info).r_info {
                 R_X86_64_RELATIVE => RX86_64Relative_Relocate(reloc_info),
-                _ => ()
+                _ => panic!("unknown relocation type")
             }
             reloc_info = reloc_info.offset(1);
             var += 1;
@@ -86,7 +89,7 @@ unsafe fn system_relocate64(elf64_shdr : *mut Elf64Shdr)
 
 unsafe fn RX86_64Relative_Relocate(elf64_rela : *mut Elf64Rela)
 {
-    *((*elf64_rela).r_offset as *mut u64) += (*elf64_rela).r_addend;
+    *((*elf64_rela).r_offset as *mut u64) += (*elf64_rela).r_addend | 0xffff8 << 44;
 }
 
 
@@ -147,7 +150,7 @@ enum SegmentType
 unsafe fn load_system_section(disk : &io::IdeDiskT, elf64_phdr : *mut Elf64Phdr)
 {
     let blocks;
-     let mut block_num = 0u64;
+    let mut block_num = 0u64;
     if (*elf64_phdr).p_flags | (SegmentType::PtLoad as u32) > 0
     {
         // Calculate Load Infomation
@@ -160,11 +163,15 @@ unsafe fn load_system_section(disk : &io::IdeDiskT, elf64_phdr : *mut Elf64Phdr)
         {
             while blocks > 255
             {
-                io::ide_pio_sync_read(&disk, (((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, 255, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num) as *mut u8);
+                io::ide_pio_sync_read(&disk, (((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, 0, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num) as *mut u8);
                 block_num += 1;
                 block_num -= 256;
             }
             io::ide_pio_sync_read(&disk,(((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, (blocks + ((*elf64_phdr).p_filesz % io::SECTOR_SIZE != 0) as u64) as u8, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num - (*elf64_phdr).p_paddr % io::SECTOR_SIZE) as *mut u8);
+        }
+        if ((*elf64_phdr).p_paddr + (*elf64_phdr).p_filesz) as usize > KERNEL_SIZE
+        {
+            KERNEL_SIZE = ((*elf64_phdr).p_paddr + (*elf64_phdr).p_memsz) as usize;
         }
     }
 }

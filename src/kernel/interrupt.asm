@@ -1,3 +1,4 @@
+
 .macro SAVE_CONTEXT
     sub rsp, 8 * 17
     mov [rsp + 0 * 8], rax
@@ -47,10 +48,9 @@
 .endm
 
 
-
 .macro INTERRUPT_HANDLER NAME:req, TYPE:req
 interrupt_handler_\NAME\():
-.ifne \TYPE
+.ifeq \TYPE
     push 0x20000906
 .endif
     push \NAME
@@ -59,11 +59,15 @@ interrupt_handler_\NAME\():
 interrupt_entry:
     SAVE_CONTEXT
     mov rdi, [rsp + 17 * 8]
-    call [HANDLER_TABLE + rax * 8]
+    mov rax, [HANDLER_TABLE@GOTPCREL + rip]
+    mov rax, [rax + rdi * 8]
+    call rax
 interrupt_exit:
     // call task signal
     RECOVER_CONTEXT
-    iret
+    add rsp, 0x10
+    xchg bx, bx
+    iretq
 
 
 INTERRUPT_HANDLER 0x00, 0
@@ -74,14 +78,50 @@ INTERRUPT_HANDLER 0x04, 0
 INTERRUPT_HANDLER 0x05, 0
 INTERRUPT_HANDLER 0x06, 0
 INTERRUPT_HANDLER 0x07, 0
-INTERRUPT_HANDLER 0x08, 0
+INTERRUPT_HANDLER 0x08, 1
 INTERRUPT_HANDLER 0x09, 0
-INTERRUPT_HANDLER 0x0a, 0
-INTERRUPT_HANDLER 0x0b, 0
-INTERRUPT_HANDLER 0x0c, 0
-INTERRUPT_HANDLER 0x0d, 0
-INTERRUPT_HANDLER 0x0e, 0
+INTERRUPT_HANDLER 0x0a, 1
+INTERRUPT_HANDLER 0x0b, 1
+INTERRUPT_HANDLER 0x0c, 1
+INTERRUPT_HANDLER 0x0d, 1
+INTERRUPT_HANDLER 0x0e, 1
 INTERRUPT_HANDLER 0x0f, 0
+INTERRUPT_HANDLER 0x10, 0
+INTERRUPT_HANDLER 0x11, 1
+INTERRUPT_HANDLER 0x12, 0
+INTERRUPT_HANDLER 0x13, 0
+INTERRUPT_HANDLER 0x14, 0
+INTERRUPT_HANDLER 0x15, 1
+INTERRUPT_HANDLER 0x16, 0
+INTERRUPT_HANDLER 0x17, 0
+INTERRUPT_HANDLER 0x18, 0
+INTERRUPT_HANDLER 0x19, 0
+INTERRUPT_HANDLER 0x1a, 0
+INTERRUPT_HANDLER 0x1b, 0
+INTERRUPT_HANDLER 0x1c, 0
+INTERRUPT_HANDLER 0x1d, 0
+INTERRUPT_HANDLER 0x1e, 0
+INTERRUPT_HANDLER 0x1f, 0
+INTERRUPT_HANDLER 0x20, 0
+INTERRUPT_HANDLER 0x21, 0
+INTERRUPT_HANDLER 0x22, 0
+INTERRUPT_HANDLER 0x23, 0
+INTERRUPT_HANDLER 0x24, 0
+INTERRUPT_HANDLER 0x25, 0
+INTERRUPT_HANDLER 0x26, 0
+INTERRUPT_HANDLER 0x27, 0
+INTERRUPT_HANDLER 0x28, 0
+INTERRUPT_HANDLER 0x29, 0
+INTERRUPT_HANDLER 0x2a, 0
+INTERRUPT_HANDLER 0x2b, 0
+INTERRUPT_HANDLER 0x2c, 0
+INTERRUPT_HANDLER 0x2d, 0
+INTERRUPT_HANDLER 0x2e, 0
+INTERRUPT_HANDLER 0x2f, 0
+
+
+
+
 
 
 .section .data
@@ -102,4 +142,35 @@ handler_entry_table:
     .quad interrupt_handler_0x0d
     .quad interrupt_handler_0x0e
     .quad interrupt_handler_0x0f
-
+    .quad interrupt_handler_0x10
+    .quad interrupt_handler_0x11
+    .quad interrupt_handler_0x12
+    .quad interrupt_handler_0x13
+    .quad interrupt_handler_0x14
+    .quad interrupt_handler_0x15
+    .quad interrupt_handler_0x16
+    .quad interrupt_handler_0x17
+    .quad interrupt_handler_0x18
+    .quad interrupt_handler_0x19
+    .quad interrupt_handler_0x1a
+    .quad interrupt_handler_0x1b
+    .quad interrupt_handler_0x1c
+    .quad interrupt_handler_0x1d
+    .quad interrupt_handler_0x1e
+    .quad interrupt_handler_0x1f
+    .quad interrupt_handler_0x20
+    .quad interrupt_handler_0x21
+    .quad interrupt_handler_0x22
+    .quad interrupt_handler_0x23
+    .quad interrupt_handler_0x24
+    .quad interrupt_handler_0x25
+    .quad interrupt_handler_0x26
+    .quad interrupt_handler_0x27
+    .quad interrupt_handler_0x28
+    .quad interrupt_handler_0x29
+    .quad interrupt_handler_0x2a
+    .quad interrupt_handler_0x2b
+    .quad interrupt_handler_0x2c
+    .quad interrupt_handler_0x2d
+    .quad interrupt_handler_0x2e
+    .quad interrupt_handler_0x2f

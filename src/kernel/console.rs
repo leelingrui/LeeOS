@@ -2,13 +2,13 @@ use core::{ffi::c_char, fmt::Write};
 use core::fmt;
 use super::{io, string};
 
-const MEM_BASE : u32 = 0xb8000;
-const MEM_SIZE : u32 = 0x4000;
-const MEM_END : u32 = MEM_BASE + MEM_SIZE;
+const MEM_BASE : u64 = 0xb8000;
+const MEM_SIZE : u64 = 0x4000;
+const MEM_END : u64 = MEM_BASE + MEM_SIZE;
 const WIDTH : u16 = 80;
 const HEIGHT : u16 = 25;
-const ROW_SIZE : u32 = (WIDTH * 2) as u32;
-const SCR_SIZE : u32 = ROW_SIZE * HEIGHT as u32;
+const ROW_SIZE : u64 = (WIDTH * 2) as u64;
+const SCR_SIZE : u64 = ROW_SIZE * HEIGHT as u64;
 
 const NUL : i8 = 0;
 const ENQ : i8 = 0x5;
@@ -21,7 +21,7 @@ const FF : i8 = 0xc;
 const CR : i8 = 0xd;
 const DEL : i8 = 0x7f;
 
-const attr : u8 = 0x7;
+const ATTR : u8 = 0x7;
 const ERASE : u16 = 0x0720;
 
 const CRT_ADDR_REG : u16 = 0x3d4;
@@ -49,12 +49,12 @@ static START_STR : &str = "
 
 pub struct Console
 {
-    screen : u32,
-    screen_size : u32,
-    mem_base : u32,
-    mem_size : u32,
-    mem_end : u32,
-    pos : u32,
+    screen : u64,
+    screen_size : u64,
+    mem_base : u64,
+    mem_size : u64,
+    mem_end : u64,
+    pos : u64,
     x : u16,
     y : u16,
     width : u16,
@@ -69,11 +69,11 @@ impl Console
     pub fn get_screen(&mut self)
     {
         io::outb(CRT_ADDR_REG, CRT_START_ADDR_H);
-        self.screen = (io::inb(CRT_DATA_REG) as u32) << 8;
+        self.screen = (io::inb(CRT_DATA_REG) as u64) << 8;
         io::outb(CRT_ADDR_REG, CRT_START_ADDR_L);
-        self.screen = io::inb(CRT_DATA_REG) as u32;
+        self.screen = io::inb(CRT_DATA_REG) as u64;
         self.screen <<= 1;
-        self.screen += MEM_BASE as u32;
+        self.screen += MEM_BASE as u64;
     }
     pub fn set_screen(&self)
     {
@@ -86,15 +86,15 @@ impl Console
     pub fn get_cursor(&mut self)
     {
         io::outb(CRT_ADDR_REG, CRT_CURSOR_H);
-        self.pos = (io::inb(CRT_DATA_REG) as u32) << 8;
+        self.pos = (io::inb(CRT_DATA_REG) as u64) << 8;
         io::outb(CRT_ADDR_REG, CRT_CURSOR_H);
-        self.pos |= io::inb(CRT_DATA_REG) as u32;
+        self.pos |= io::inb(CRT_DATA_REG) as u64;
         self.get_screen();
         self.pos <<= 1;
-        self.pos += MEM_BASE as u32;
+        self.pos += MEM_BASE as u64;
         let delta = (self.pos - self.screen) >> 1;
-        self.x = (delta % WIDTH as u32) as u16;
-        self.y = (delta / WIDTH as u32) as u16;
+        self.x = (delta % WIDTH as u64) as u16;
+        self.y = (delta / WIDTH as u64) as u16;
     }
 
     pub unsafe fn write(&mut self, mut buffer : *const i8, cnt : usize) -> usize
@@ -122,7 +122,7 @@ impl Console
 
     unsafe fn cr(&mut self)
     {
-        self.pos -= (self.x << 1) as u32;
+        self.pos -= (self.x << 1) as u64;
         self.x = 0;
     }
 
@@ -132,13 +132,13 @@ impl Console
         {
             self.x -= 1;
             self.pos -= 2;
-            *(self.pos as *mut u16) = ERASE;
+            *((self.pos + 0xffff800000000000) as *mut u16) = ERASE;
         }
     }
 
     unsafe fn del(&mut self)
     {
-        *(self.pos as *mut u16) = ERASE;
+        *((self.pos + 0xffff800000000000) as *mut u16) = ERASE;
     }
 
     unsafe fn lf(&mut self)
@@ -146,7 +146,7 @@ impl Console
         if self.y + 1 < self.height
         {
             self.y += 1;
-            self.pos += self.row_size as u32;
+            self.pos += self.row_size as u64;
             return;
         }
         self.scroll_up();
@@ -154,15 +154,15 @@ impl Console
 
     unsafe fn scroll_up(&mut self)
     {
-        if self.screen_size + (self.row_size as u32) + self.screen < self.mem_end
+        if self.screen_size as u64 + (self.row_size as u64) + (self.screen as u64) < self.mem_end as u64
         {
-            string::memcpy_s(self.mem_base as *mut u8, self.screen_size as usize, self.mem_base as *mut u8, self.screen_size as usize);
-            self.pos -= self.screen - self.mem_base;
+            string::memcpy_s((self.mem_base + 0xffff800000000000) as *mut u8, self.screen_size as usize, (self.mem_base + 0xffff800000000000) as *mut u8, self.screen_size as usize);
+            self.pos -= self.screen - self.mem_base as u64;
             self.screen = self.mem_base;
         }
-        self.erase_screen((self.screen + self.screen_size) as *mut u16, self.width as u32);
-        self.screen += self.row_size as u32;
-        self.pos += self.row_size as u32;
+        self.erase_screen((self.screen + 0xffff800000000000 + self.screen_size) as *mut u16, self.width as u32);
+        self.screen += self.row_size as u64;
+        self.pos += self.row_size as u64;
         self.set_screen();
     }
 
@@ -188,7 +188,7 @@ impl Console
 
     pub fn init(&mut self)
     {
-        self.screen = MEM_BASE as u32;
+        self.screen = MEM_BASE as u64;
         self.pos = self.mem_base;
         self.x = 0;
         self.y = 0;
@@ -204,13 +204,13 @@ impl Console
         if self.x >= self.width
         {
             self.x -= self.width;
-            self.pos -= self.row_size as u32;
+            self.pos -= self.row_size as u64;
             self.lf();
         }
         unsafe {
-            *(self.pos as *mut i8) = chr;
+            *((self.pos | 0xffff800000000000) as *mut i8) = chr;
             self.pos += 1;
-            *(self.pos as *mut u8) = self.style;
+            *((self.pos | 0xffff800000000000) as *mut u8) = self.style;
             self.pos += 1;
             self.x += 1;
         }
@@ -257,6 +257,7 @@ impl fmt::Write for Console {
 
 pub fn _print(args : fmt::Arguments)
 {
+
     unsafe {
         CONSOLE.write_fmt(args).unwrap()
     }
@@ -275,6 +276,16 @@ macro_rules! printk {
         $crate::kernel::console::_print(format_args!($($arg)*))
     });
 }
+
+#[cfg(debug_assertions)]
+#[macro_export]
+macro_rules! logk {
+    ($($arg:tt)*) => 
+    ({
+        $crate::kernel::console::_print(format_args!($($arg)*))
+    });
+}
+
 
 // #[macro_export]
 // macro_rules! println {

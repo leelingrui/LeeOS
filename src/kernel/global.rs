@@ -21,7 +21,7 @@ bitfield!
 {
     #[derive(Clone, Copy)]
     pub struct DescriptorT(u64);
-    u32;
+    u64;
     get_limit_low, set_limit_low : 15, 0;
     get_base_low, set_base_low : 39, 16;
     get_type, set_type : 43, 40;
@@ -47,19 +47,19 @@ impl fmt::Display for DescriptorT
     }
 }
 
-fn descriptor_init(desc : &mut DescriptorT, base : u32, limit : u32, segment : bool, granularity : bool, big : bool, long_mode : bool, present : bool, dpl : u8, type_t : u8)
+fn descriptor_init(desc : &mut DescriptorT, base : u64, limit : u32, segment : bool, granularity : bool, big : bool, long_mode : bool, present : bool, dpl : u8, type_t : u8)
 {
     desc.set_base_low(base & 0xffffff);
     desc.set_base_high(base >> 24 & 0xff);
-    desc.set_limit_low(limit & 0xffff);
-    desc.set_limit_high(limit >> 16 & 0xf);
-    desc.set_segment(segment as u32);
-    desc.set_granularity(granularity as u32);
-    desc.set_big(big as u32);
-    desc.set_long_mode(long_mode as u32);
-    desc.set_present(present as u32);
-    desc.set_dpl(dpl as u32);
-    desc.set_type(type_t as u32);
+    desc.set_limit_low((limit & 0xffff) as u64);
+    desc.set_limit_high((limit >> 16 & 0xf) as u64);
+    desc.set_segment(segment as u64);
+    desc.set_granularity(granularity as u64);
+    desc.set_big(big as u64);
+    desc.set_long_mode(long_mode as u64);
+    desc.set_present(present as u64);
+    desc.set_dpl(dpl as u64);
+    desc.set_type(type_t as u64);
 }
 
 pub fn get_gdt(no : isize) -> DescriptorT
@@ -83,12 +83,13 @@ pub fn gdt_init()
     printk!("init gdt!!!\n");
     unsafe {
         memset(GDT.as_ptr() as *mut u8, 0, GDT_SIZE * size_of::<DescriptorT>());
-        descriptor_init(&mut GDT[KERNEL_CODE_IDX], 0, 0x0, true, true, false, true, true, 0, 0b1110);
-        descriptor_init(&mut GDT[KERNEL_DATA_IDX], 0, 0x0, true, true, false, true, true, 0, 0b0010);
+        descriptor_init(&mut GDT[KERNEL_CODE_IDX], 0x0, 0x0, true, true, false, true, true, 0, 0b1110);
+        descriptor_init(&mut GDT[KERNEL_DATA_IDX], 0x0, 0x0, true, true, false, true, true, 0, 0b0010);
         GDT_PTR.base = GDT.as_ptr() as u64;
         GDT_PTR.limit = (GDT_SIZE - 1) as u16;
         asm!(
-            "lgdt [GDT_PTR]",
+            "lgdt [{gdt_ptr}]",
+            gdt_ptr = in(reg) &GDT_PTR as *const PointerT as u64
         );
     }
 }

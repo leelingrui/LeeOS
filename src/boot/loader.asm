@@ -92,7 +92,9 @@ read_disk:
 
     xor ecx, ecx
     mov cl, bl; 得到读写扇区的数量
-
+    cmp bl, 0
+    jne .read
+    mov cx, 0x100
 .read:
     push cx
     call .waits
@@ -125,7 +127,6 @@ read_disk:
     add edi, 2
     loop .readw
     ret
-
 support_long_mode:
 
 	mov	eax,	0x80000000
@@ -152,7 +153,8 @@ long_mode:
     mov esp, 0x90000
     call load_system64_header
 	mov	dword	[0x90000],	0x91007
-	mov	dword	[0x90800],	0x91007		
+	mov	dword	[0x90800],	0x93007
+    mov dword   [0x90880],  0x93007
 	mov	dword	[0x91000],	0x92007
 	mov	dword	[0x92000],	0x000083
 	mov	dword	[0x92008],	0x200083
@@ -162,10 +164,28 @@ long_mode:
 	mov	dword	[0x92028],	0xa00083
 	mov	dword	[0x92030],	0xc00083
 	mov	dword	[0x92038],	0xe00083
-	mov	dword	[0x92040],	0x1000083
-	mov	dword	[0x92048],	0x1200083
+    mov dword   [0x93000],  0x94007
+    mov dword   [0x94000],  0x000083
+    mov dword   [0x94008],  0x200083
+    mov dword   [0x94010],  0x400083
+    mov dword   [0x94018],  0x600083
+    mov dword   [0x94020],  0x800083
+    mov dword   [0x94028],  0xa00083
+    mov dword   [0x94030],  0xc00083
+    mov dword   [0x94038],  0xe00083
+    mov dword   [0x94040],  0x1000083
+    mov dword   [0x94048],  0x1200083
+    mov dword   [0x94050],  0x1400083
+    mov dword   [0x94058],  0x1600083
+    mov dword   [0x94060],  0x1800083
+    mov dword   [0x94068],  0x1a00083
+    mov dword   [0x94070],  0x1c00083
+    mov dword   [0x94078],  0x1e00083
+	; mov	dword	[0x92040],	0x1000083
+	; mov	dword	[0x92048],	0x1200083
     mov	eax,	cr4
 	bts	eax,	5
+	bts	eax,	4
 	mov	cr4,	eax
     mov	eax,	0x90000
 	mov	cr3,	eax
@@ -178,7 +198,12 @@ long_mode:
     bts eax, 31
     mov cr0, eax
     lgdt [gdt_ptr64]
-    jmp code_selector:0x100000
+    jmp code_selector:jmp_dst
+jmp_dst:
+[BITS 64]
+    mov rax, 0xffff800000100000
+    call rax
+[BITS 32]
 
 chech_elf_64:
     push edi
@@ -254,7 +279,25 @@ load_code_segment:
     inc ebx; 计算读取多少磁盘块
 .next2:
     pop ecx
+    test ebx, 0x100
+    push ebx; read block num
+    push ecx; start block
+    push edi; dst position
     call read_disk
+    pop edi
+    pop ecx
+    pop ebx
+    test ebx, 0xff
+    jz .read_block
+.read_block:
+    and bx, 0
+    cmp ebx, 0
+    jz .read_finish
+    sub ebx, 0x100
+    add ecx, 0x100
+    add edi, 0x100 * 512
+    jmp .next2
+.read_finish
     mov eax, 1
     ret
 
@@ -272,7 +315,7 @@ load_system64_header:
     call chech_elf_64
     test eax, eax
     jz error
-    mov edi, 0x100000
+    mov edi, [elf_header_pos + 0x18]
     mov esi, elf_header_pos
     call load_code_segment 
     ret
@@ -348,6 +391,9 @@ open_long_mode:
     db "Opening Long Mode...", 13, 10, 0
 open_long_mode_success:
     db "Opening Long Mode Success...", 13, 10, 0
+support_1G_big_page_msg:
+    db "Support 1GB Big Page", 13, 10, 0
+
 error:
     mov si, .msg
     call print

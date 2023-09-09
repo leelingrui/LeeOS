@@ -8,3 +8,7 @@ edition = "2021"
 [dependencies]
 
 bitfield = "0.14.0"
+bitflags = "2.4.0"
+buddy_system_allocator = "0.9"
+compiler_builtins = "0.1.101"
+static_assertions = "1.1.0"

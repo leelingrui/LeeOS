@@ -1,9 +1,14 @@
+use core::arch::asm;
+
 static mut IDLE_CNT : u64 = 0;
 
 pub fn idle()
 {
     unsafe
     {
-        IDLE_CNT += 1;
+        loop {
+            IDLE_CNT += 1;
+            asm!("hlt");
+        }
     }
 }
