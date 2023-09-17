@@ -1,4 +1,4 @@
-use core::arch::asm;
+use core::{arch::asm, ffi::c_void};
 use crate::logk;
 
 use super::cpu;
@@ -25,6 +25,20 @@ bitflags!
         const CR0_CD = 1 << 30; // Cache Disable 禁用内存缓冲
         const CR0_PG = 1 << 31; // Paging 启用分页
     }
+}
+#[inline]
+pub fn get_cr2_reg() -> *const c_void
+{
+    let cr2;
+    unsafe
+    {
+        asm!(
+            "mov rax, cr2",
+            out("rax") cr2
+        );
+    }
+
+    cr2
 }
 
 pub fn cpu_check_cpuid() -> bool

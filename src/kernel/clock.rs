@@ -19,11 +19,11 @@ const IRQ_CLOCK : u8 = 0;
 static mut BEEPING : bool = false;
 static mut JIFFIES : u64 = 0;
 
-extern "C" fn clock_handler(vector : u32)
+extern "C" fn clock_handler(vector : u64)
 {
     assert!(vector == 0x20);
     logk!("clock interrupt occured\n");
-    interrupt::send_eoi(vector);
+    interrupt::send_eoi(vector as u32);
     unsafe { JIFFIES += 1 };
     
 }
@@ -47,7 +47,6 @@ pub fn clock_init()
     interrupt::regist_irq(clock_handler as interrupt::HandlerFn, IRQ_CLOCK);
     interrupt::get_interrupt_state();
     interrupt::set_interrupt_mask(IRQ_CLOCK.into(), true);
-    interrupt::set_interrupt_state(true);
 }
 
 fn timer_expires() -> u64

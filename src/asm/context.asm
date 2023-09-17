@@ -8,19 +8,18 @@
     mov [rsp + 5 * 8], rdi
     mov [rsp + 6 * 8], rsp
     mov [rsp + 7 * 8], rbp
-    mov [rsp + 8 * 8], rip
-    mov [rsp + 9 * 8], r8
-    mov [rsp + 10 * 8], r9
-    mov [rsp + 11 * 8], r10
-    mov [rsp + 12 * 8], r11
-    mov [rsp + 13 * 8], r12
-    mov [rsp + 14 * 8], r13
-    mov [rsp + 15 * 8], r14
-    mov [rsp + 16 * 8], r15
-    mov [rsp + 17 * 8 + 0], ds
-    mov [rsp + 17 * 8 + 2], es
-    mov [rsp + 17 * 8 + 4], fs
-    mov [rsp + 17 * 8 + 6], gs
+    mov [rsp + 8 * 8], r8
+    mov [rsp + 9 * 8], r9
+    mov [rsp + 10 * 8], r10
+    mov [rsp + 11 * 8], r11
+    mov [rsp + 12 * 8], r12
+    mov [rsp + 13 * 8], r13
+    mov [rsp + 14 * 8], r14
+    mov [rsp + 15 * 8], r15
+    mov [rsp + 16 * 8 + 0], ds
+    mov [rsp + 16 * 8 + 2], es
+    mov [rsp + 16 * 8 + 4], fs
+    mov [rsp + 16 * 8 + 6], gs
 .endm
 
 .macro RECOVER_CONTEXT

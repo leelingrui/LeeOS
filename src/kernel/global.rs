@@ -1,13 +1,17 @@
 use core::{intrinsics::size_of, default::Default, arch::asm, fmt};
-use crate::{printk, kernel::string::memset};
+use crate::{printk, kernel::{string::memset, memory}, bochs_break};
 
 const GDT_SIZE : usize = 8192;
 static mut GDT : [DescriptorT; GDT_SIZE] = [DescriptorT(0); GDT_SIZE];
+static mut KERNEL_TSS : TaskStateSegment = TaskStateSegment::new();
 #[no_mangle]
 pub static mut GDT_PTR : PointerT = PointerT{ base: 0, limit: 0 };
 use bitfield::bitfield;
-const KERNEL_CODE_IDX : usize = 1;
-const KERNEL_DATA_IDX : usize = 2;
+pub const KERNEL_CODE_IDX : usize = 1;
+pub const KERNEL_DATA_IDX : usize = 2;
+pub const TSS_IDX : usize = 3;
+pub const USER_CODE_IDX : usize = 5;
+pub const USER_DATA_IDX : usize = 6;
 #[repr(C)]
 #[derive(Default, Clone)]
 #[repr(packed)]
@@ -15,6 +19,34 @@ pub struct PointerT
 {
     limit : u16,
     base : u64
+}
+pub type TSS = TaskStateSegment; 
+
+#[repr(C, packed)]
+struct TaskStateSegment
+{
+    reserved0 : u32,
+    rsp0 : u64,
+    rsp1 : u64,
+    rsp2 : u64,
+    reserved1 : u64,
+    ist1 : u64,
+    ist2 : u64,
+    ist3 : u64,
+    ist4 : u64,
+    ist5 : u64,
+    ist6 : u64,
+    ist7 : u64,
+    reserved2 : u64,
+    reserved3 : u16,
+    iobp : u16
+}
+
+impl TaskStateSegment {
+    const fn new() -> TaskStateSegment
+    {
+        TaskStateSegment { reserved0: 0, rsp0: 0, rsp1: 0, rsp2: 0, reserved1: 0, ist1: 0, ist2: 0, ist3: 0, ist4: 0, ist5: 0, ist6: 0, ist7: 0, reserved2: 0, reserved3: 0, iobp: 0 }
+    }
 }
 
 bitfield!
@@ -24,7 +56,7 @@ bitfield!
     u64;
     get_limit_low, set_limit_low : 15, 0;
     get_base_low, set_base_low : 39, 16;
-    get_type, set_type : 43, 40;
+    get_type, set_type : 43, 40; // A RW DC E
     get_segment, set_segment : 44, 44;
     get_dpl, set_dpl : 46, 45;
     get_present, set_present : 47, 47;
@@ -77,14 +109,47 @@ pub fn get_gdt(no : isize) -> DescriptorT
     }
 }
 
+fn set_tss64(tss_ptr : &mut TaskStateSegment, rsp0 : u64, rsp1 : u64, rsp2 : u64, ist1 : u64, ist2 : u64, ist3 : u64, ist4 : u64, ist5 : u64, ist6 : u64, ist7 : u64)
+{
+    tss_ptr.rsp0 = rsp0;
+    tss_ptr.rsp1 = rsp1;
+    tss_ptr.rsp2 = rsp2;
+    tss_ptr.ist1 = ist1;
+    tss_ptr.ist2 = ist2;
+    tss_ptr.ist3 = ist3;
+    tss_ptr.ist4 = ist4;
+    tss_ptr.ist5 = ist5;
+    tss_ptr.ist6 = ist6;
+    tss_ptr.ist7 = ist7;
+}
+
+pub fn tss_init()
+{
+    unsafe
+    {
+        let interrupt_stack = 0xffff800000090000u64;// memory::MEMORY_POOL.alloc_frames(1).offset(memory::PAGE_SIZE as isize);
+        descriptor_init(&mut GDT[TSS_IDX], &KERNEL_TSS as *const TaskStateSegment as u64, (size_of::<TaskStateSegment>() - 1) as u32, false, false, false, false, true, 0, 0x9);
+        set_tss64(&mut KERNEL_TSS, interrupt_stack as u64, interrupt_stack as u64, interrupt_stack as u64, interrupt_stack as u64, interrupt_stack as u64, interrupt_stack as u64, interrupt_stack as u64, interrupt_stack as u64, interrupt_stack as u64, interrupt_stack as u64);
+        GDT[TSS_IDX + 1].0 = (&KERNEL_TSS as *const TaskStateSegment as u64) >> 32 & 0xffffffff;
+        asm!(
+            "ltr ax",
+            in("ax") (TSS_IDX << 3)
+        )
+    }
+
+}
+
 #[no_mangle]
 pub fn gdt_init()
 {
     printk!("init gdt!!!\n");
     unsafe {
         memset(GDT.as_ptr() as *mut u8, 0, GDT_SIZE * size_of::<DescriptorT>());
-        descriptor_init(&mut GDT[KERNEL_CODE_IDX], 0x0, 0x0, true, true, false, true, true, 0, 0b1110);
-        descriptor_init(&mut GDT[KERNEL_DATA_IDX], 0x0, 0x0, true, true, false, true, true, 0, 0b0010);
+        descriptor_init(&mut GDT[KERNEL_CODE_IDX], 0x0, 0xfffff, true, true, false, true, true, 0, 0b1010);
+        descriptor_init(&mut GDT[KERNEL_DATA_IDX], 0x0, 0xfffff, true, true, false, true, true, 0, 0b0010);
+
+        descriptor_init(&mut GDT[USER_CODE_IDX], 0x0, 0xfffff, true, true, false, true, true, 3, 0b1010);
+        descriptor_init(&mut GDT[USER_DATA_IDX], 0x0, 0xfffff, true, true, false, true, true, 3, 0b0010);
         GDT_PTR.base = GDT.as_ptr() as u64;
         GDT_PTR.limit = (GDT_SIZE - 1) as u16;
         asm!(

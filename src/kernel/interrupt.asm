@@ -1,50 +1,48 @@
 
 .macro SAVE_CONTEXT
-    sub rsp, 8 * 17
-    mov [rsp + 0 * 8], rax
-    mov [rsp + 1 * 8], rcx
-    mov [rsp + 2 * 8], rdx
-    mov [rsp + 3 * 8], rbx
-    mov [rsp + 4 * 8], rsi
-    mov [rsp + 5 * 8], rdi
-    mov [rsp + 6 * 8], rsp
-    mov [rsp + 7 * 8], rbp
+    sub rsp, 8 * 16
+    mov [rsp + 15 * 8], rax
+    mov [rsp + 14 * 8], rcx
+    mov [rsp + 13 * 8], rdx
+    mov [rsp + 12 * 8], rbx
+    mov [rsp + 11 * 8], rsi
+    mov [rsp + 10 * 8], rdi
+    mov [rsp + 9 * 8], rbp
     mov [rsp + 8 * 8], r8
-    mov [rsp + 9 * 8], r9
-    mov [rsp + 10 * 8], r10
-    mov [rsp + 11 * 8], r11
-    mov [rsp + 12 * 8], r12
-    mov [rsp + 13 * 8], r13
-    mov [rsp + 14 * 8], r14
-    mov [rsp + 15 * 8], r15
-    mov [rsp + 16 * 8 + 0], ds
-    mov [rsp + 16 * 8 + 2], es
-    mov [rsp + 16 * 8 + 4], fs
-    mov [rsp + 16 * 8 + 6], gs
+    mov [rsp + 7 * 8], r9
+    mov [rsp + 6 * 8], r10
+    mov [rsp + 5 * 8], r11
+    mov [rsp + 4 * 8], r12
+    mov [rsp + 3 * 8], r13
+    mov [rsp + 2 * 8], r14
+    mov [rsp + 1 * 8], r15
+    mov [rsp + 0 * 8 + 6], ds
+    mov [rsp + 0 * 8 + 4], es
+    mov [rsp + 0 * 8 + 2], fs
+    mov [rsp + 0 * 8 + 0], gs
 .endm
 
 .macro RECOVER_CONTEXT
-    mov rax, [rsp + 0 * 8]
-    mov rcx, [rsp + 1 * 8]
-    mov rdx, [rsp + 2 * 8]
-    mov rbx, [rsp + 3 * 8]
-    mov rsi, [rsp + 4 * 8]
-    mov rdi, [rsp + 5 * 8]
-    mov rsp, [rsp + 6 * 8]
-    mov rbp, [rsp + 7 * 8]
+    mov rax, [rsp + 15 * 8]
+    mov rcx, [rsp + 14 * 8]
+    mov rdx, [rsp + 13 * 8]
+    mov rbx, [rsp + 12 * 8]
+    mov rsi, [rsp + 11 * 8]
+    mov rdi, [rsp + 10 * 8]
+    mov rbp, [rsp + 9 * 8]
     mov r8, [rsp + 8 * 8]
-    mov r9, [rsp + 9 * 8]
-    mov r10, [rsp + 10 * 8]
-    mov r11, [rsp + 11 * 8]
-    mov r12, [rsp + 12 * 8]
-    mov r13, [rsp + 13 * 8]
-    mov r14, [rsp + 14 * 8]
-    mov r15, [rsp + 15 * 8]
-    mov ds, [rsp + 16 * 8 + 0]
-    mov es, [rsp + 16 * 8 + 0]
-    mov fs, [rsp + 16 * 8 + 0]
-    mov gs, [rsp + 16 * 8 + 0]
-    add rsp, 8 * 17
+    mov r9, [rsp + 7 * 8]
+    mov r10, [rsp + 6 * 8]
+    mov r11, [rsp + 5 * 8]
+    mov r12, [rsp + 4 * 8]
+    mov r13, [rsp + 3 * 8]
+    mov r14, [rsp + 2 * 8]
+    mov r15, [rsp + 1 * 8]
+    mov ds, [rsp + 0 * 8 + 6]
+    mov es, [rsp + 0 * 8 + 4]
+    mov fs, [rsp + 0 * 8 + 2]
+    mov gs, [rsp + 0 * 8 + 0]
+    add rsp, 8 * 16
 .endm
 
 
@@ -58,9 +56,11 @@ interrupt_handler_\NAME\():
 .endm
 interrupt_entry:
     SAVE_CONTEXT
-    mov rdi, [rsp + 17 * 8]
+    lea rsi, [rsp]
+    mov rdi, [rsp + 16 * 8]
     mov rax, [HANDLER_TABLE@GOTPCREL + rip]
     mov rax, [rax + rdi * 8]
+    xchg bx, bx
     call rax
 interrupt_exit:
     // call task signal
@@ -68,6 +68,7 @@ interrupt_exit:
     add rsp, 0x10
     xchg bx, bx
     iretq
+
 
 
 INTERRUPT_HANDLER 0x00, 0

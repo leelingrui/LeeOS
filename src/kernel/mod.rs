@@ -18,3 +18,4 @@ pub mod page;
 pub mod bitops;
 pub mod cpu;
 pub mod fpu;
+pub mod syscall;

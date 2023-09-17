@@ -13,7 +13,6 @@ use crate::bochs_break;
 pub fn log2(mut x : f64) -> f64
 {
     unsafe {
-        bochs_break!();
         asm!(
             "fld1",
             "fld dword ptr [{input}]",

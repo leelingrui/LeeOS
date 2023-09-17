@@ -290,10 +290,16 @@ load_code_segment:
     test ebx, 0xff
     jz .read_block
 .read_block:
-    and bx, 0
+    movzx esi, bl
+    add ecx, esi
+    shl esi, 9
+    add edi, esi
+    and bl, 0
     cmp ebx, 0
-    jz .read_finish
+    je .read_finish
     sub ebx, 0x100
+    call read_disk
+    cmp ebx, 0
     add ecx, 0x100
     add edi, 0x100 * 512
     jmp .next2

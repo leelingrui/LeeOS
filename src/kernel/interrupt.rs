@@ -1,7 +1,7 @@
 use core::{arch::{asm, global_asm}, default, fmt};
 use bitfield::{bitfield, size_of};
 
-use crate::{printk, kernel::io::inb, logk};
+use crate::{printk, kernel::io::inb, logk, bochs_break};
 
 const PIC_M_CTRL : u16 = 0x20; // 主片的控制端口
 const PIC_M_DATA : u16 =  0x21; // 主片的数据端口
@@ -61,7 +61,7 @@ const FAULT_MESSAGES : [&str; 22] = [
     "#CP Control Protection Exception",
 ];
 
-use super::io::outb;
+use super::{io::outb, process};
 const IDT_SIZE : usize = 0x100;
 static mut IDT : [DescriptorT; IDT_SIZE] = [DescriptorT(0); IDT_SIZE];
 #[no_mangle]
@@ -131,32 +131,32 @@ pub fn get_idt(no : isize) -> DescriptorT
     }
 }
 
-struct PtRegs
-{
-    r15 : u64,
-    r14 : u64,
-    r13 : u64,
-    r12 : u64,
-    rbp : u64,
-    rbx : u64,
-    // always save
-    r11 : u64,
-    r10 : u64,
-    r9 : u64,
-    r8 : u64,
-    rax : u64,
-    rcx : u64,
-    rdx : u64,
-    rsi : u64,
-    rdi : u64,
-    orig_ax : u64,
-    rip : u64,
-    cs : u64,
-    flags : u64,
-    rsp : u64,
-    ss : u64
-    // top of stack
-}
+// struct PtRegs
+// {
+//     r15 : u64,
+//     r14 : u64,
+//     r13 : u64,
+//     r12 : u64,
+//     rbp : u64,
+//     rbx : u64,
+//     // always save
+//     r11 : u64,
+//     r10 : u64,
+//     r9 : u64,
+//     r8 : u64,
+//     rax : u64,
+//     rcx : u64,
+//     rdx : u64,
+//     rsi : u64,
+//     rdi : u64,
+//     orig_ax : u64,
+//     rip : u64,
+//     cs : u64,
+//     flags : u64,
+//     rsp : u64,
+//     ss : u64
+//     // top of stack
+// }
 fn default_handler(vector : u32)
 {
     logk!("[{}] default interrupt called...\n", vector);
@@ -224,8 +224,7 @@ impl DescriptorT
     }
 }
 
-#[repr(C)]
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Default, Clone)]
 pub struct PointerT
 {
@@ -233,14 +232,18 @@ pub struct PointerT
     base : u64
 }
 
-fn exception_handler(vector : u32)
+unsafe fn exception_handler(vector : u32, regs : process::PtRegs)
 {
+    bochs_break!();
     let mut message = "";
     if vector < 22
     {
         message = FAULT_MESSAGES[vector as usize];
     }
-    printk!("EXCEPTION {}\n", message);
+    let cs = regs.cs;
+    printk!("EXCEPTION: {}\n", message);
+    printk!("   VECTOR: {}\n", vector);
+    printk!("       CS: {}\n", cs);
 }
 
 fn idt_init()
@@ -250,7 +253,7 @@ fn idt_init()
         let mut var = 0;
         while var < SYS_CALL_RESERVED_SIZE
         {
-            IDT[var].descriptor_init(handler_entry_table[var] as u64, 1 << 3, 0b1110, 0, true);
+            IDT[var].descriptor_init(handler_entry_table[var] as u64, (1 << 3), 0b1111, 0, true);
             var += 1;
         }
         var = 0;
@@ -258,7 +261,8 @@ fn idt_init()
             set_interrupt_handler(exception_handler as HandlerFn, var as u8);
             var += 1;
         }
-        IDT[80].descriptor_init(default_handler as u64, 1 << 3, 0b1110, 0, true);
+        printk!("IDT: {}", IDT[14]);
+        IDT[80].descriptor_init(default_handler as u64, 1 << 3, 0b1110, 3, true);
         IDT_PTR.base = IDT.as_ptr() as u64;
         IDT_PTR.limit = (IDT_SIZE * 16 - 1) as u16;
         asm!(
