@@ -232,9 +232,9 @@ pub struct PointerT
     base : u64
 }
 
+
 unsafe fn exception_handler(vector : u32, regs : process::PtRegs)
 {
-    bochs_break!();
     let mut message = "";
     if vector < 22
     {
@@ -253,7 +253,7 @@ fn idt_init()
         let mut var = 0;
         while var < SYS_CALL_RESERVED_SIZE
         {
-            IDT[var].descriptor_init(handler_entry_table[var] as u64, (1 << 3), 0b1111, 0, true);
+            IDT[var].descriptor_init(handler_entry_table[var] as u64, 1 << 3, 0b1111, 0, true);
             var += 1;
         }
         var = 0;

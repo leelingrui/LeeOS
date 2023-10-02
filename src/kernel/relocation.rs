@@ -147,7 +147,7 @@ enum SegmentType
     PtHiproc = 0x7fffffff,
 }
 
-unsafe fn load_system_section(disk : &io::IdeDiskT, elf64_phdr : *mut Elf64Phdr)
+unsafe fn load_system_section(elf64_phdr : *mut Elf64Phdr)
 {
     let blocks;
     let mut block_num = 0u64;
@@ -163,11 +163,11 @@ unsafe fn load_system_section(disk : &io::IdeDiskT, elf64_phdr : *mut Elf64Phdr)
         {
             while blocks > 255
             {
-                io::ide_pio_sync_read(&disk, (((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, 0, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num) as *mut u8);
+                io::ide_early_pio_sync_read((((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, 0, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num) as *mut u8);
                 block_num += 1;
                 block_num -= 256;
             }
-            io::ide_pio_sync_read(&disk,(((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, (blocks + ((*elf64_phdr).p_filesz % io::SECTOR_SIZE != 0) as u64) as u8, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num - (*elf64_phdr).p_paddr % io::SECTOR_SIZE) as *mut u8);
+            io::ide_early_pio_sync_read((((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, (blocks + ((*elf64_phdr).p_filesz % io::SECTOR_SIZE != 0) as u64) as u8, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num - (*elf64_phdr).p_paddr % io::SECTOR_SIZE) as *mut u8);
         }
         if ((*elf64_phdr).p_paddr + (*elf64_phdr).p_filesz) as usize > KERNEL_SIZE
         {
@@ -188,8 +188,6 @@ pub unsafe fn kernel_relocation(elf64_ehdr : *mut Elf64Ehdr)
     let mut shdr;
     let mut phdr;
     let mut var = 1;
-    let mut _ctrl = io::IdeCtrlT::new(io::IDE_IOBASE_PRIMARY);
-    let _disk = io::IdeDiskT::new(&mut _ctrl as *mut IdeCtrlT, io::IDE_LBA_MASTER, true, 0xfffffff);
     unsafe {
         phdr = ((elf64_ehdr as u64 + (*elf64_ehdr).e_phoff) as *mut Elf64Phdr).offset(1);
         
@@ -197,13 +195,13 @@ pub unsafe fn kernel_relocation(elf64_ehdr : *mut Elf64Ehdr)
         {
             if (*phdr).p_type == (SegmentType::PtLoad as u32)
             {
-                load_system_section(&_disk, phdr);
+                load_system_section(phdr);
             }
             phdr = phdr.offset(1);
             var += 1;
         }
         let start_pos = (*elf64_ehdr).e_shoff - (*elf64_ehdr).e_shoff % io::SECTOR_SIZE;
-        io::ide_pio_sync_read(&_disk, ((start_pos / io::SECTOR_SIZE) + 10) as u32, ((*elf64_ehdr).e_shoff + ((*elf64_ehdr).e_shnum  as u64) * (size_of::<Elf64Shdr>() as u64) - start_pos).div_ceil(io::SECTOR_SIZE) as u8 , (elf64_ehdr as *mut u8).offset(4096));
+        io::ide_early_pio_sync_read(((start_pos / io::SECTOR_SIZE) + 10) as u32, ((*elf64_ehdr).e_shoff + ((*elf64_ehdr).e_shnum  as u64) * (size_of::<Elf64Shdr>() as u64) - start_pos).div_ceil(io::SECTOR_SIZE) as u8 , (elf64_ehdr as *mut u8).offset(4096));
         shdr = ((elf64_ehdr as u64 + (*elf64_ehdr).e_shoff % 512) + 4096) as *mut Elf64Shdr;
         var = 0;
         while var < (*elf64_ehdr).e_shnum

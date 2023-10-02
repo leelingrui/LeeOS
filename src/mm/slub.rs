@@ -2,7 +2,9 @@ use core::{ffi::c_void, ptr::{null_mut, null}, sync::atomic::AtomicU32, intrinsi
 use alloc::{rc::Rc, string::String};
 use crate::{kernel::bitops, bochs_break};
 use core::arch::asm;
-use super::{list::ListHead, semaphore, page::{self, GFP}, memory::{self, MEMORY_POOL}, math};
+use crate::kernel::{list::ListHead, semaphore, math};
+
+use super::{page::{GFP, self}, memory::{self, MEMORY_POOL}};
 const MAX_NUMNODES : usize = 1;
 const KMALLOC_THREASHHOLD : usize = 0x800;
 pub const KMALLOC_CACHES_NUM : usize = 12;
@@ -196,7 +198,7 @@ impl KmemCacheNode {
         {
             let mut new_frame = memory::MEMORY_POOL.alloc_frame_temporary();
             let allocable_object_num = memory::PAGE_SIZE / kmem_cache.object_size as usize - 1;
-            let page_discriptor = MEMORY_POOL.mem_map.offset(memory::virt_to_page(new_frame) as isize) as *mut Slab;
+            let page_discriptor = MEMORY_POOL.mem_map.offset(memory::virt2page(new_frame) as isize) as *mut Slab;
             (*page_discriptor).free_list = new_frame;
             (*page_discriptor).__page_flags = kmem_cache.flags;
             let mut var = 0;
@@ -303,6 +305,7 @@ impl KmemCache {
             (*next).slab_list.prev = new_slab as *mut ListHead;
             (*new_slab).slab_list.next = next as *mut ListHead;
             self.node[nid].partial.next = new_slab as *mut ListHead;
+            self.node[nid].nr_partial += num_object as u64 + 1;
             self.alloc_node(nid)
         }
     }
@@ -339,7 +342,8 @@ impl KmemCache {
             else {
                 let mut var = 0;
                 while var < page_num {
-                    (*memory::MEMORY_POOL.mem_map.offset(var as isize)).flags = self.flags
+                    (*memory::MEMORY_POOL.mem_map.offset(var as isize)).flags = self.flags;
+                    var += 1;
                 }
             }
             result
@@ -354,7 +358,7 @@ impl KmemCache {
             if object.is_null()
             {
                 let new_page = self.alloc_from_buddy_system(1);
-                let page_discriptor = memory::MEMORY_POOL.mem_map.offset(memory::virt_to_page(new_page).try_into().unwrap()) as *mut Slab;
+                let page_discriptor = memory::MEMORY_POOL.mem_map.offset(memory::virt2page(new_page).try_into().unwrap()) as *mut Slab;
                 (*page_discriptor).free_list = new_page;
                 object = self.alloc_single_from_new_slab(page_discriptor);
             }

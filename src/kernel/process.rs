@@ -1,13 +1,15 @@
 use core::{arch::asm, ffi::{c_void, c_char}, ptr::null_mut, alloc::{GlobalAlloc, Layout}, mem::size_of};
 
-use crate::{printk, kernel::{process, global, memory::{MEMORY_POOL, PAGE_SIZE}}};
+use crate::{printk, kernel::{global, cpu::get_cpu_number, sched::{self, set_running_process}}, lib::unistd::write, fs::file::STDOUT, mm::{mm_type, memory::USER_STACK_START}};
 
-use super::memory;
+use crate::mm::memory;
 pub type PCB = ProcessControlBlock;
 const MAX_PROGRESS_NUM : u16 = u16::MAX;
+const MAX_PROCSEE_STACK_SIZE : usize = 0x4000000;
 static mut TASK_TABLE : [*mut PCB ;MAX_PROGRESS_NUM as usize] = [null_mut(); MAX_PROGRESS_NUM as usize];
 #[repr(C, packed)]
 #[derive(Default)]
+#[derive(Clone)]
 pub struct PtRegs
 {
     pub gs : u16,
@@ -30,6 +32,7 @@ pub struct PtRegs
     pub rcx : u64,
     pub rax : u64,
     pub error : u64,
+    pub code : u64,
     pub rip : u64,
     pub cs : u64,
     pub rflags : u64,
@@ -39,9 +42,10 @@ pub struct PtRegs
 
 fn user_function()
 {
+    let str = "print from usermode\n";
     let mut var = 0u64;
     loop {
-        unsafe { asm!("mov qword ptr [0x11000], 5") };
+        write(STDOUT, str.as_ptr() as *const i8, str.len());
         var += 1;
     }
 }
@@ -60,25 +64,22 @@ unsafe fn do_execve(regs : *mut PtRegs, name : *mut c_char, argv : *mut *mut c_c
     return 0;
 }
 
-#[derive(Copy, Clone)]
 pub struct ProcessControlBlock
 {
-    kernel_stack : *mut u64,
-    priority : u32,
-    jiffies : u32,
-    name : [c_char; 16],
-    uid : u32,
-    gid : u32,
-    pid : Pid,
-    ppid : Pid,
-    pgid : Pid,
-    pml4 : *mut memory::Pml4,
-    brk : *mut c_void,
-    text : *mut c_void,
-    data : *mut c_void,
-    end : *mut c_void,
-    wait_pid : Pid,
-    blocked : u32,
+    pub kernel_stack : *mut u64,
+    pub pt_regs : PtRegs,
+    pub mm : mm_type::MMStruct,
+    pub priority : u32,
+    pub jiffies : u32,
+    pub name : [c_char; 16],
+    pub uid : u32,
+    pub gid : u32,
+    pub pid : Pid,
+    pub ppid : Pid,
+    pub pgid : Pid,
+    pub pml4 : *mut memory::Pml4,
+    pub wait_pid : Pid,
+    pub blocked : u32,
 }
 
 pub fn running_process() -> *mut PCB
@@ -99,11 +100,22 @@ fn schedule()
 }
 
 impl ProcessControlBlock {
-    unsafe fn create_task() -> *mut ProcessControlBlock
+    pub fn create_task_control_block() -> *mut ProcessControlBlock
     {
-        let result = memory::MEMORY_POOL.alloc(Layout::new::<ProcessControlBlock>()) as *mut ProcessControlBlock;
-        (*result) = ProcessControlBlock { kernel_stack:null_mut(), priority: 0, jiffies: 0, name: [0; 16], uid: 0, gid: 0, pid: 0, ppid: 0, pgid: 0, pml4: null_mut(), brk: null_mut(), text:null_mut(), data: null_mut(), end: null_mut(), wait_pid: 0, blocked: 0 };
-        result
+        unsafe
+        {
+            let result = memory::MEMORY_POOL.alloc(Layout::new::<ProcessControlBlock>()) as *mut ProcessControlBlock;
+            (*result) = ProcessControlBlock { kernel_stack:null_mut(), priority: 0, jiffies: 0, name: [0; 16], uid: 0, gid: 0, pid: 0, ppid: 0, pgid: 0, pml4: null_mut(), wait_pid: 0, blocked: 0, mm: mm_type::MMStruct::new(result), pt_regs: Default::default() };
+            result
+        }
+    }
+
+    pub fn distory_task_control_block(pcb_ptr : *mut ProcessControlBlock)
+    {
+        unsafe
+        {
+            memory::MEMORY_POOL.dealloc(pcb_ptr as *mut u8, Layout::new::<ProcessControlBlock>());
+        }
     }
 }
 
@@ -111,60 +123,70 @@ pub fn init()
 {
     unsafe
     {
-        let pcb = running_process();
-        let process_frame = pcb.offset((-(memory::PAGE_SIZE as i64) - size_of::<PtRegs>() as i64) as isize) as *mut PtRegs;
-        (*process_frame).rax = 0;
-        (*process_frame).rcx = 1;
-        (*process_frame).rdx = 2;
-        (*process_frame).rbx = 3;
-        (*process_frame).rsi = 4;
-        (*process_frame).rdi = 5;
-        (*process_frame).r9 = 6;
-        (*process_frame).r10 = 7;
-        (*process_frame).r11 = 8;
-        (*process_frame).r12 = 9;
-        (*process_frame).r13 = 10;
-        (*process_frame).r14 = 11;
-        (*process_frame).r15 = 12;
-        (*process_frame).cs = ((global::USER_CODE_IDX << 3) | 3) as u64;
-        (*process_frame).ds = ((global::USER_DATA_IDX << 3) | 3) as u16;
-        (*process_frame).es = ((global::USER_DATA_IDX << 3) | 3) as u16;
-        (*process_frame).gs = ((global::USER_DATA_IDX << 3) | 3) as u16;
-        (*process_frame).fs = ((global::USER_DATA_IDX << 3) | 3) as u16;
-        (*process_frame).rsp = memory::USER_STACK_START as u64;
-        (*process_frame).rflags = 0 << 12 | 0b10 | 1 << 9;
-        (*process_frame).rip = user_function as u64;
-        (*process_frame).ss = ((global::USER_DATA_IDX << 3) | 3) as u64;
-        printk!("initing task");
-        asm!(
-            "mov rsp, {frame}",
-            frame = in(reg) process_frame as u64
-        );
-        asm!(
-            "xchg bx, bx",
-            "mov rax, [rsp + 15 * 8]",
-            "mov rcx, [rsp + 14 * 8]",
-            "mov rdx, [rsp + 13 * 8]",
-            "mov rbx, [rsp + 12 * 8]",
-            "mov rsi, [rsp + 11 * 8]",
-            "mov rdi, [rsp + 10 * 8]",
-            "mov rbp, [rsp + 9 * 8",
-            "mov r8, [rsp + 8 * 8]",
-            "mov r9, [rsp + 7 * 8]",
-            "mov r10, [rsp + 6 * 8]",
-            "mov r11, [rsp + 5 * 8]",
-            "mov r12, [rsp + 4 * 8]",
-            "mov r13, [rsp + 3 * 8]",
-            "mov r14, [rsp + 2 * 8]",
-            "mov r15, [rsp + 1 * 8]",
-            "mov ds, [rsp + 0 * 8 + 6]",
-            "mov es, [rsp + 0 * 8 + 4]",
-            "mov fs, [rsp + 0 * 8 + 2]",
-            "mov gs, [rsp + 0 * 8 + 0]",
-            "add rsp, 8 * 17",
-            "iretq"
-        );
+        printk!("initing task\n");
+        sched::RUNNING_PROCESS.resize(get_cpu_number(), null_mut());
+        let pcb_addr = ProcessControlBlock::create_task_control_block();
+        (*pcb_addr).mm.create_new_mem_area(USER_STACK_START.offset(-(MAX_PROCSEE_STACK_SIZE as isize)) as u64, memory::USER_STACK_START as u64);
+        let process_frame = &mut (*pcb_addr).pt_regs;
+        process_frame.rax = 0;
+        process_frame.rcx = 1;
+        process_frame.rdx = 2;
+        process_frame.rbx = 3;
+        process_frame.rsi = 4;
+        process_frame.rdi = 5;
+        process_frame.r9 = 6;
+        process_frame.r10 = 7;
+        process_frame.r11 = 8;
+        process_frame.r12 = 9;
+        process_frame.r13 = 10;
+        process_frame.r14 = 11;
+        process_frame.r15 = 12;
+        process_frame.cs = ((global::USER_CODE_IDX << 3) | 3) as u64;
+        process_frame.ds = ((global::USER_DATA_IDX << 3) | 3) as u16;
+        process_frame.es = ((global::USER_DATA_IDX << 3) | 3) as u16;
+        process_frame.gs = ((global::USER_DATA_IDX << 3) | 3) as u16;
+        process_frame.fs = ((global::USER_DATA_IDX << 3) | 3) as u16;
+        process_frame.rsp = USER_STACK_START as u64;// memory::USER_STACK_START as u64;
+        process_frame.rflags = 0 << 12 | 0b10 | 1 << 9;
+        process_frame.rip = user_function as u64;
+        process_frame.ss = ((global::USER_DATA_IDX << 3) | 3) as u64;
+        direct_to_usermode(pcb_addr);
     }
 
+}
 
+
+#[allow(unused)]
+unsafe fn direct_to_usermode(pcb : *mut ProcessControlBlock)
+{
+    let process_frame = &(*pcb).pt_regs as *const PtRegs;
+    set_running_process(pcb);
+    asm!(
+        "mov rsp, {frame}",
+        frame = in(reg) process_frame
+    );
+    asm!(
+        "mov rax, [rsp + 15 * 8]",
+        "mov rcx, [rsp + 14 * 8]",
+        "mov rdx, [rsp + 13 * 8]",
+        "mov rbx, [rsp + 12 * 8]",
+        "mov rsi, [rsp + 11 * 8]",
+        "mov rdi, [rsp + 10 * 8]",
+        "mov rbp, [rsp + 9 * 8",
+        "mov r8, [rsp + 8 * 8]",
+        "mov r9, [rsp + 7 * 8]",
+        "mov r10, [rsp + 6 * 8]",
+        "mov r11, [rsp + 5 * 8]",
+        "mov r12, [rsp + 4 * 8]",
+        "mov r13, [rsp + 3 * 8]",
+        "mov r14, [rsp + 2 * 8]",
+        "mov r15, [rsp + 1 * 8]",
+        "mov ds, [rsp + 0 * 8 + 6]",
+        "mov es, [rsp + 0 * 8 + 4]",
+        "mov fs, [rsp + 0 * 8 + 2]",
+        "mov gs, [rsp + 0 * 8 + 0]",
+        "add rsp, 8 * 18",
+        "xchg bx, bx",
+        "iretq"
+    );
 }

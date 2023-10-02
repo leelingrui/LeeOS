@@ -13,14 +13,16 @@ use buddy_system_allocator::{LockedFrameAllocator, LockedHeap};
 
 use crate::kernel::cpu::get_cr2_reg;
 use crate::kernel::interrupt::set_interrupt_handler;
-use crate::kernel::{slub, lang_items, interrupt};
+use crate::kernel::interrupt;
+use crate::kernel::sched::get_current_running_process;
 use crate::{printk, logk, bochs_break};
 
 
-use super::cpu;
+use crate::kernel::cpu;
 use super::page::{self, Pageflags, GFP};
-use super::process::PtRegs;
-use super::{relocation, bitmap, string::memset, semaphore};
+use super::slub;
+use crate::kernel::process::PtRegs;
+use crate::kernel::{relocation, bitmap, string::memset, semaphore};
 const ARDS_BUFFER : *const c_void = 0x7c00 as *const c_void;
 static mut KERNEL_PAGE_DIR : *const c_void = 0x0 as *const c_void;
 pub static mut MEMORY_DESCRIPTOR : MemoryDescriptor = MemoryDescriptor{ size : 0, all_pages : 0, start : core::ptr::null() };
@@ -41,12 +43,19 @@ pub fn handle_alloc_error(layout : Layout) -> !
 }
 unsafe impl GlobalAlloc for MemoryPool {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let kmem_cache = slub::kmalloc_slab(layout.size(), GFP::empty());
-        (*kmem_cache).alloc() as *mut u8
+        if layout.size() <= 2048
+        {
+            let kmem_cache = slub::kmalloc_slab(layout.size(), GFP::empty());
+            (*kmem_cache).alloc() as *mut u8
+        }
+        else {
+            let need_pages = (layout.size() / PAGE_SIZE) + ((layout.size() % PAGE_SIZE != 0) as usize);
+            MEMORY_POOL.alloc_frames(need_pages) as *mut u8
+        }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        todo!()
+        
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
@@ -195,29 +204,39 @@ pub struct MemoryPool
 //         result
 //     }
 // }
+#[inline]
+pub fn phys2page(phys : *const c_void) -> u64
+{
+    (phys.wrapping_sub(PHYADDR_START as usize) as u64) >> PAGE_SHIFT
+}
 
 #[inline]
-pub fn virt_to_page(addr : *const c_void) -> u64
+pub fn phys2virt(paddr : *const c_void) -> *mut c_void
+{
+    page2virt(phys2page(paddr))
+}
+#[inline]
+pub fn virt2page(addr : *const c_void) -> u64
 {
     (addr.wrapping_sub(LINEAR_MAP_ARREA_START as usize + PHYADDR_START as usize) as u64) >> PAGE_SHIFT as u64
 }
 
 #[inline]
-pub fn page_to_phys(page : u64) -> *mut c_void
+pub fn page2phys(page : u64) -> *mut c_void
 {
     (PHYADDR_START as u64 + (page << PAGE_SHIFT)) as *mut c_void
 }
 
 #[inline]
-pub fn page_to_virt(page : u64) -> *mut c_void
+pub fn page2virt(page : u64) -> *mut c_void
 {
     unsafe { ((LINEAR_MAP_ARREA_START as u64 + (page << PAGE_SHIFT)) as *mut c_void).offset(PHYADDR_START as isize) }
 }
 
 #[inline]
-pub fn virt_to_phys(virt : *const c_void) -> *mut c_void
+pub fn virt2phys(virt : *const c_void) -> *mut c_void
 {
-    page_to_phys(virt_to_page(virt))
+    page2phys(virt2page(virt))
 }
 
 #[inline]
@@ -250,7 +269,7 @@ impl MemoryPool {
                 self.alloc_frame_temporary();
                 var += 1; 
             }
-            let page_id = virt_to_page(first_page_vaddr) as usize;
+            let page_id = virt2page(first_page_vaddr) as usize;
             var = 0;
             while var < need_pages {
                 (*self.mem_map.offset((page_id + var) as isize))._refcount.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -314,7 +333,7 @@ impl MemoryPool {
                         (*self.mem_map.offset((start_frame + var) as isize))._refcount.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                         var += 1;
                     }
-                    page_to_virt(*start_frame as u64)
+                    page2virt(*start_frame as u64)
                 }
             }
         }
@@ -376,7 +395,7 @@ impl MemoryPool {
             let mut var = get_pml4_offset(dst_vaddr);
             while total_kernel_size >> 39 != 0
             {
-                let pdpt_addr = virt_to_phys(self.alloc_frame_temporary());
+                let pdpt_addr = virt2phys(self.alloc_frame_temporary());
                 memset(pdpt_addr as *mut u8, 0, PAGE_SIZE);
                 (*pml4_ptr).entry[var].set_page_offset(Self::get_page_idx(pdpt_addr));
                 (*pml4_ptr).entry[var].set_present(1);
@@ -385,13 +404,29 @@ impl MemoryPool {
                 self.init_pdpt(pdpt_addr as *mut Pdpt, &mut total_kernel_size, &mut dst_vaddr, &mut dst_paddr);
                 var += 1;
             }
-            let pdpt_addr = virt_to_phys(self.alloc_frame_temporary());
+            let pdpt_addr = virt2phys(self.alloc_frame_temporary());
             memset(pdpt_addr as *mut u8, 0, PAGE_SIZE);
             (*pml4_ptr).entry[var].set_page_offset(Self::get_page_idx(pdpt_addr));
             (*pml4_ptr).entry[var].set_present(1);
             (*pml4_ptr).entry[var].set_wr(1);
             (*pml4_ptr).entry[var].set_us(1);
             self.init_pdpt(pdpt_addr as *mut Pdpt, &mut total_kernel_size, &mut dst_vaddr, &mut dst_paddr);
+        }
+    }
+
+    fn set_pml4(pdpt_ptr : *mut Pdpt, dst_vaddr : *const c_void, dst_paddr : *const c_void, big_page : bool, kernel_space : bool, writable : bool)
+    {
+        unsafe
+        {
+            let var = get_pml4_offset(dst_vaddr);
+            if (*pdpt_ptr).entry[var].get_present() == 0
+            {
+                (*pdpt_ptr).entry[var].set_page_offset(Self::get_page_idx(dst_paddr));
+                (*pdpt_ptr).entry[var].set_present(1);
+                (*pdpt_ptr).entry[var].set_wr(writable as u64);
+                (*pdpt_ptr).entry[var].set_us(!kernel_space as u64);
+                (*pdpt_ptr).entry[var].set_ps(big_page as u64);
+            }
         }
     }
 
@@ -433,7 +468,7 @@ impl MemoryPool {
         {
             let mut var = get_pdpt_offset(*dst_vaddr);
             while *total_size >> 30 != 0 {
-                let pdt_addr = virt_to_phys(self.alloc_frame_temporary());
+                let pdt_addr = virt2phys(self.alloc_frame_temporary());
                 memset(pdt_addr as *mut u8, 0, PAGE_SIZE);
                 (*pdpt_ptr).entry[var].set_page_offset(Self::get_page_idx(pdt_addr));
                 (*pdpt_ptr).entry[var].set_present(1);
@@ -442,7 +477,7 @@ impl MemoryPool {
                 self.init_pdt(pdpt_ptr as *mut Pdt, total_size, dst_vaddr, dst_paddr);
                 var += 1;
             }
-            let pdt_addr = virt_to_phys(self.alloc_frame_temporary());
+            let pdt_addr = virt2phys(self.alloc_frame_temporary());
             memset(pdt_addr as *mut u8, 0, PAGE_SIZE);
             (*pdpt_ptr).entry[var].set_page_offset(Self::get_page_idx(pdt_addr));
             (*pdpt_ptr).entry[var].set_present(1);
@@ -470,7 +505,7 @@ impl MemoryPool {
                 {
                     let pdt_ptr = MEMORY_POOL.alloc_frame_temporary();
                     compiler_builtins::mem::memset(pdt_ptr as *mut u8, 0, PAGE_SIZE);
-                    Self::set_pdpt(pdpt_ptr as *mut Pdpt, vaddr as *const c_void, virt_to_phys(pdt_ptr) as *const c_void, false, true, true);
+                    Self::set_pdpt(pdpt_ptr as *mut Pdpt, vaddr as *const c_void, virt2phys(pdt_ptr) as *const c_void, false, true, true);
                     let mut var = 0;
                     while var < 512 {
                         Self::set_pdt(pdt_ptr as *mut Pdt, vaddr as *const c_void, paddr, true, false, true);
@@ -479,7 +514,7 @@ impl MemoryPool {
                         var += 1;
                     }
                 }
-                (*pml4_ptr).entry[var].set_page_offset(Self::get_page_idx(virt_to_phys(pdpt_ptr as *const c_void)));
+                (*pml4_ptr).entry[var].set_page_offset(Self::get_page_idx(virt2phys(pdpt_ptr as *const c_void)));
                 (*pml4_ptr).entry[var].set_present(1);
                 (*pml4_ptr).entry[var].set_wr(1);
                 (*pml4_ptr).entry[var].set_us(1);
@@ -497,7 +532,7 @@ impl MemoryPool {
         {
             let mut var = get_pdt_offset(*dst_vaddr);
             while *total_size >> 21 != 0 {
-                let pt_addr = virt_to_phys(self.alloc_frame_temporary());
+                let pt_addr = virt2phys(self.alloc_frame_temporary());
                 memset(pt_addr as *mut u8, 0, PAGE_SIZE);
                 (*pdt_ptr).entry[var].set_page_offset(Self::get_page_idx(pt_addr));
                 (*pdt_ptr).entry[var].set_present(1);
@@ -506,7 +541,7 @@ impl MemoryPool {
                 self.init_pt(pt_addr as *mut Pt, total_size, dst_vaddr, dst_paddr);
                 var += 1;
             }
-            let pt_addr = virt_to_phys(self.alloc_frame_temporary());
+            let pt_addr = virt2phys(self.alloc_frame_temporary());
             memset(pt_addr as *mut u8, 0, PAGE_SIZE);
             (*pdt_ptr).entry[var].set_page_offset(Self::get_page_idx(pt_addr));
             (*pdt_ptr).entry[var].set_present(1);
@@ -526,7 +561,7 @@ impl MemoryPool {
             }
             let mut var = get_pt_offset(*dst_vaddr);
             loop {
-                Self::set_pt_entry(&mut (*pt_ptr).entry[var], *dst_paddr, true, true, true, false, false, false, false, false, false);
+                Self::set_pt(&mut (*pt_ptr).entry[var], *dst_paddr, true, true, true, false, false, false, false, false, false);
                 *dst_paddr = dst_paddr.offset(1 << 12);
                 var += 1;
                 if *total_size <= 1 << 12 || var >= 512
@@ -542,19 +577,20 @@ impl MemoryPool {
         }
     }
 
-    fn set_pt_entry(pt_entry : &mut PtEntry, dst_vaddr : *mut c_void, present : bool, writable : bool, every_one_avaliable : bool, pwt : bool, pcd : bool, accessed : bool, dirty : bool, pat : bool, global : bool)
+    fn set_pt(pt_entry : &mut PtEntry, dst_paddr : *const c_void, present : bool, writable : bool, every_one_avaliable : bool, pwt : bool, pcd : bool, accessed : bool, dirty : bool, pat : bool, global : bool)
     {
         pt_entry.set_present(present.try_into().unwrap());
         pt_entry.set_wr(writable.try_into().unwrap());
         pt_entry.set_us(every_one_avaliable.try_into().unwrap());
         pt_entry.set_pwt(pwt.try_into().unwrap());
         pt_entry.set_pcd(pcd.try_into().unwrap());
-        pt_entry.set_accessed(dirty.try_into().unwrap());
-        pt_entry.set_dirty(pat.try_into().unwrap());
+        pt_entry.set_accessed(accessed.try_into().unwrap());
+        pt_entry.set_dirty(dirty.try_into().unwrap());
         pt_entry.set_pat(pat.try_into().unwrap());
         pt_entry.set_global(global.try_into().unwrap());
-        pt_entry.set_page_offset(Self::get_page_idx(dst_vaddr));
+        pt_entry.set_page_offset(Self::get_page_idx(dst_paddr));
     }
+    
 
     pub fn alloc_frame_temporary(&mut self) -> *mut c_void
     {
@@ -577,7 +613,7 @@ impl MemoryPool {
         unsafe {
             (*self.mem_map.offset(self.lowest_idx as isize))._refcount.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         }
-        let result = page_to_virt(self.lowest_idx as u64);
+        let result = page2virt(self.lowest_idx as u64);
         logk!("kernel get page {:#x}\n", self.lowest_idx);
         self.lowest_idx += 1;
         self.free_pages -= 1;
@@ -713,6 +749,12 @@ bitfield!
 }
 
 #[inline]
+fn get_page_start(addr : *const c_void) -> *const c_void
+{
+    (addr as u64 & 0xfffffffffffff000) as *const c_void
+}
+
+#[inline]
 fn get_inpage_offset(ptr : *const c_void) -> usize
 {
     (ptr as u64 & 0xfffff).try_into().unwrap()
@@ -724,14 +766,16 @@ fn get_pdpt_offset(ptr : *const c_void) -> usize
     ((ptr as u64 >> 30) & 0x1ff).try_into().unwrap()
 }
 
+#[inline]
 fn get_pdt_offset(ptr : *const c_void) -> usize
 {
     ((ptr as u64 >> 21) & 0x1ff).try_into().unwrap()
 }
 
+#[inline]
 fn get_pt_offset(ptr : *const c_void) -> usize
 {
-    ((ptr as u64 >> 12) & 0xfff).try_into().unwrap()
+    ((ptr as u64 >> 12) & 0x1ff).try_into().unwrap()
 }
 
 #[inline]
@@ -777,9 +821,32 @@ fn print_ards(mut e820map_addr : *const E820Map)
 
 }
 
-unsafe fn link_pages(vaddr : *const c_void, paddr : *const c_void, pages : usize)
+unsafe fn link_pages(vaddr : *const c_void, paddr : *const c_void, kernel_space : bool, writable : bool)
 {
-    
+    let pml4 = phys2virt((get_cr3_reg() & 0xfffffffffffff000) as *const c_void) as *mut Pml4;
+    let pm4_offset = get_pml4_offset(vaddr);
+    if (*pml4).entry[pm4_offset].get_present() == 0
+    {
+        let new_pdpt = MEMORY_POOL.alloc_frames(1);
+        MemoryPool::set_pml4(pml4, vaddr, virt2phys(new_pdpt), false, kernel_space, true)
+    }
+    let pdpt = phys2virt(((*pml4).entry[pm4_offset].get_page_offset() << 12) as *const c_void) as *mut Pdpt;
+    let pdpt_offset = get_pdpt_offset(vaddr);
+    if (*pdpt).entry[pdpt_offset].get_present() == 0
+    {
+        let new_pdt = MEMORY_POOL.alloc_frames(1);
+        MemoryPool::set_pdpt(pdpt, vaddr, virt2phys(new_pdt), false, kernel_space, true);
+    }
+    let pdt = phys2virt(((*pdpt).entry[pdpt_offset].get_page_offset() << 12) as *const c_void) as *mut Pdt;
+    let pdt_offset = get_pdt_offset(vaddr);
+    if (*pdt).entry[pdt_offset].get_present() == 0
+    {
+        let new_pt = MEMORY_POOL.alloc_frames(1);
+        MemoryPool::set_pdt(pdt, vaddr, virt2phys(new_pt), false, kernel_space, true);
+    }
+    let pt = phys2virt(((*pdt).entry[pdt_offset].get_page_offset() << 12) as *const c_void) as *mut Pt;
+    let pt_offset = get_pt_offset(vaddr);
+    MemoryPool::set_pt(&mut (*pt).entry[pt_offset], paddr, true, writable, !kernel_space, false, false, false, false, false, false)
 }
 
 unsafe fn get_useable_memory(descriptor : *const E820Map)
@@ -839,8 +906,26 @@ pub fn init_memory(magic : u32, address : *const c_void)
     }
 }
 
+fn link_user_page(vaddr : *const c_void)
+{
+    unsafe
+    {
+        let new_page = MEMORY_POOL.alloc_frames(1);
+        link_pages(get_page_start(vaddr), virt2phys(new_page), false, true);
+    }
+}
+
 extern "C" fn page_fault(vector : u64, regs : PtRegs)
 {
-    assert!(vector == interrupt::INTR_PF);
-    let pg_fault_pos = get_cr2_reg();
+    unsafe
+    {
+        assert!(vector == interrupt::INTR_PF);
+        let pg_fault_pos = get_cr2_reg();
+        let pcb = get_current_running_process();
+        if (*pcb).mm.contain(pg_fault_pos as u64)
+        {
+            link_user_page(pg_fault_pos);
+        }
+    }
+
 }

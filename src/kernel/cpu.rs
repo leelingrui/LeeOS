@@ -26,6 +26,26 @@ bitflags!
         const CR0_PG = 1 << 31; // Paging 启用分页
     }
 }
+
+pub fn get_cpu_number() -> usize
+{
+    1
+}
+
+#[inline]
+pub  fn wrmsr(dst : u64, value : u64)
+{
+    unsafe
+    {
+        asm!(
+            "wrmsr",
+            in("rdx") (value >> 32),
+            in("rax") value & 0xffffffff,
+            in("rcx") dst,
+        )
+    }
+}
+
 #[inline]
 pub fn get_cr2_reg() -> *const c_void
 {

@@ -2,9 +2,11 @@ BUILD:=./build
 SRC:=./src
 RSFILES:=$(SRC)/main.rs $(SRC)/kernel/console.rs $(SRC)/kernel/interrupt.rs $(SRC)/kernel/io.rs $(SRC)/kernel/lang_items.rs \
 	$(SRC)/kernel/mod.rs $(SRC)/kernel/relocation.rs $(SRC)/kernel/semaphore.rs $(SRC)/kernel/string.rs $(SRC)/kernel/interrupt.asm \
-	$(SRC)/kernel/entry.asm $(SRC)/kernel/global.rs $(SRC)/kernel/memory.rs $(SRC)/kernel/bitmap.rs $(SRC)/kernel/clock.rs $(SRC)/kernel/math.rs \
-	$(SRC)/kernel/process.rs $(SRC)/kernel/slub.rs $(SRC)/kernel/list.rs $(SRC)/kernel/page.rs $(SRC)/kernel/fpu.rs  \
-	$(SRC)/kernel/cpu.rs $(SRC)/kernel/bitops.rs
+	$(SRC)/kernel/entry.asm $(SRC)/kernel/global.rs $(SRC)/mm/memory.rs $(SRC)/kernel/bitmap.rs $(SRC)/kernel/clock.rs $(SRC)/kernel/math.rs \
+	$(SRC)/kernel/process.rs $(SRC)/mm/slub.rs $(SRC)/kernel/list.rs $(SRC)/mm/page.rs $(SRC)/kernel/fpu.rs  \
+	$(SRC)/kernel/cpu.rs $(SRC)/kernel/bitops.rs $(SRC)/kernel/syscall.rs $(SRC)/lib/mod.rs $(SRC)/lib/unistd.rs \
+	$(SRC)/fs/file.rs $(SRC)/fs/mod.rs $(SRC)/mm/mm_type.rs $(SRC)/kernel/sched.rs $(SRC)/fs/ntfs.rs $(SRC)/kernel/time.rs \
+	$(SRC)/fs/ext4.rs
 ENTRYPOINT:=0x0xffff800000100000
 # RFLAGS+= target-feature=-crt-static
 RFLAGS:=$(strip ${RFLAGS})
@@ -41,33 +43,35 @@ $(BUILD)/system.map: $(BUILD)/x86_64-unknown-none/debug/lee_os
 	nm $< | sort > $@
 
 
-$(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
-	$(BUILD)/boot/loader.asm.bin \
-	$(BUILD)/x86_64-unknown-none/debug/lee_os $(BUILD)/system.map
-	yes | bximage -q -hd=16 -func=create -sectsize=512 -imgmode=flat $@
-	dd if=$(BUILD)/boot/boot.asm.bin of=$@ bs=512 count=1 conv=notrunc
-	dd if=$(BUILD)/boot/loader.asm.bin of=$@ bs=512 count=4 seek=2 conv=notrunc
-	dd if=$(BUILD)/x86_64-unknown-none/debug/lee_os of=$@ bs=512 seek=10 conv=notrunc
+include $(SRC)/utils/image.mk
 
 .PHONY: qemug
-qemug: $(BUILD)/master.img
+qemug:  $(IMAGES)
 	qemu-system-x86_64 -s -S -m 32M -boot c \
-	-drive file=$<,if=ide,index=0,media=disk,format=raw \
+	-drive file=$(BUILD)/master.img,if=ide,index=0,media=disk,format=raw \
+	-drive file=$(BUILD)/slave.img,if=ide,index=1,media=disk,format=raw \
+	-rtc base=localtime \
 	-audiodev wav,id=hda \
-	-machine pcspk-audiodev=hda
+	-machine pcspk-audiodev=hda \
+	-chardev stdio,mux=on,id=com1 \
+	-serial chardev:com1
 
 .PHONY: qemu
-qemu: $(BUILD)/master.img
+qemu:  $(IMAGES)
 	qemu-system-x86_64 -m 32M -boot c \
-	-drive file=$<,if=ide,index=0,media=disk,format=raw \
-	-audiodev wav,id=hda \
-	-machine pcspk-audiodev=hda
+	-drive file=$(BUILD)/master.img,if=ide,index=0,media=disk,format=raw \
+	-drive file=$(BUILD)/slave.img,if=ide,index=1,media=disk,format=raw \
+	-rtc base=localtime \
+	-audiodev wav,id=snd \
+	-machine pcspk-audiodev=hda \
+	-chardev stdio,mux=on,id=com1 \
+	-serial chardev:com1
 .PHONY: bochs
-bochs: $(BUILD)/master.img
+bochs:  $(IMAGES)
 	bochs -q -f bochsrc -unlock
 
 .PHONY: bochsg
-bochsg: $(BUILD)/master.img
+bochsg: $(IMAGES)
 	bochs-gdb -q -f bochsrc.gdb -unlock
 
 .PHONY: clean

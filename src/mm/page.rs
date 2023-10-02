@@ -1,6 +1,6 @@
-use core::{ffi::c_void, sync::atomic::{self, AtomicI32}, mem::size_of};
+use core::{ffi::c_void, sync::atomic::AtomicI32, mem::size_of};
 use bitflags::bitflags;
-use super::{list::{ListHead}, memory};
+use crate::kernel::list::ListHead;
 pub const NODES_WIDTH : u32 = 22;
 pub const ZONES_WIDTH : u32 = size_of::<Pageflags>() as u32 * 8 - NODES_WIDTH;
 pub const NODES_PGSHIFT : u32 = NODES_WIDTH;
@@ -9,7 +9,7 @@ pub const ZONES_MASK : u32 = 1 << ZONES_PGSHIFT - 1;
 pub const NODES_MASK : u32 = 1 << NODES_PGSHIFT - 1;
 
 bitflags!{
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Eq, PartialEq)]
     pub struct Pageflags : u32
     {
         const PgLocked = 1 << 0;              /* Page is locked. Don't touch. */

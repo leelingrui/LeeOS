@@ -1,5 +1,5 @@
 use core::{intrinsics::size_of, default::Default, arch::asm, fmt};
-use crate::{printk, kernel::{string::memset, memory}, bochs_break};
+use crate::{printk, kernel::string::memset};
 
 const GDT_SIZE : usize = 8192;
 static mut GDT : [DescriptorT; GDT_SIZE] = [DescriptorT(0); GDT_SIZE];

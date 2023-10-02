@@ -1,8 +1,15 @@
 use core::sync::atomic;
 
+
 pub struct  SpinLock
 {
     counting : atomic::AtomicI64
+}
+
+impl Default for SpinLock {
+    fn default() -> Self {
+        Self { counting: atomic::AtomicI64::new(0) }
+    }
 }
 
 impl SpinLock

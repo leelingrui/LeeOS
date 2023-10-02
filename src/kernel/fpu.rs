@@ -46,7 +46,7 @@ fn fpu_check() -> bool
 
 pub fn fpu_init()
 {
-    logk!("initial fpu");
+    logk!("initial fpu\n");
     let fpu_exist = fpu_check();
     assert!(fpu_exist);
     if fpu_exist

@@ -69,7 +69,25 @@ interrupt_exit:
     xchg bx, bx
     iretq
 
-
+_syscall_start:
+    push r11
+    push rcx
+    push rbx
+    mov rbx, [SYSTEM_CALL_TABLE@GOTPCREL + rip]
+    push r9
+    push r8
+    push r10
+    push rdx
+    push rsi
+    push rdi
+    call [rbx + rax * 8]
+    add rsp, 8 * 6
+    mov [rsp + 8 * 4], rax
+    pop rbx
+    pop rcx
+    pop r11
+    xchg bx, bx
+    sysretq
 
 INTERRUPT_HANDLER 0x00, 0
 INTERRUPT_HANDLER 0x01, 0
