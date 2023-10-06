@@ -22,6 +22,12 @@ use crate::mm::memory;
 use crate::mm::memory::MEMORY_POOL;
 use crate::mm::memory::PAGE_SIZE;
 use crate::printk;
+use super::device;
+use super::device::DevT;
+use super::device::DeviceIoCtlFn;
+use super::device::DeviceReadFn;
+use super::device::DeviceWriteFn;
+use super::device::device_install;
 use super::interrupt;
 use super::semaphore;
 use super::io;
@@ -213,16 +219,16 @@ pub struct IdePart
 
 pub struct IdeDiskT
 {
-    name : [char; 8],                  // 磁盘名称
-    ctrl : *mut IdeCtrlT,       // 控制器指针
-    selector : u8,                   // 磁盘选择
-    master : bool,                   // 主盘
-    total_lba : u32,                 // 可用扇区数量
-    cylinders : u32,
-    heads : u32,
-    sectors : u32,
-    lock : SpinLock,
-    parts : [IdePart; IDE_PART_NR] // 硬盘分区
+    pub name : [char; 8],                  // 磁盘名称
+    pub ctrl : *mut IdeCtrlT,       // 控制器指针
+    pub selector : u8,                   // 磁盘选择
+    pub master : bool,                   // 主盘
+    pub total_lba : u32,                 // 可用扇区数量
+    pub cylinders : u32,
+    pub heads : u32,
+    pub sectors : u32,
+    pub lock : SpinLock,
+    pub parts : [IdePart; IDE_PART_NR] // 硬盘分区
 }
 
 impl IdeDiskT {
@@ -489,6 +495,41 @@ unsafe fn ide_part_init(disk : &mut IdeDiskT)
         }
     }
     
+}
+
+pub fn ide_init()
+{
+    ide_ctrl_init();
+    ide_install();
+}
+
+fn ide_install()
+{
+    unsafe
+    {
+        let mut cidx = 0;
+        while cidx < IDE_CTRL_NR {
+            let ctrl = &mut CONTROLLERS[cidx];
+            let mut didx = 0;
+            while didx < IDE_DISK_NR {
+                let disk = &ctrl.disks[didx];
+                if disk.total_lba == 0
+                {
+                    didx += 1;
+                    continue;
+                }
+                let _dev_t = device_install(0, super::device::DeviceType::Block, disk as *const IdeDiskT as *mut c_void,
+                 CStr::from_ptr(disk.name.as_ptr() as *mut i8).to_str().unwrap(), 0, 0,
+                
+                Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(device::ide_disk_ioctl as *mut())) , Some(core::mem::transmute::<*mut(), DeviceReadFn>(ide_pio_sync_read as *mut())), Option::None);
+                didx += 1;
+                // part install
+            }
+            cidx += 1;
+        }
+
+    }
+
 }
 
 pub fn ide_ctrl_init()

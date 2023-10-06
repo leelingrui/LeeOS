@@ -18,3 +18,4 @@ pub mod fpu;
 pub mod syscall;
 pub mod sched;
 pub mod time;
+pub mod device;

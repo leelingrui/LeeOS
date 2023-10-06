@@ -6,7 +6,7 @@ RSFILES:=$(SRC)/main.rs $(SRC)/kernel/console.rs $(SRC)/kernel/interrupt.rs $(SR
 	$(SRC)/kernel/process.rs $(SRC)/mm/slub.rs $(SRC)/kernel/list.rs $(SRC)/mm/page.rs $(SRC)/kernel/fpu.rs  \
 	$(SRC)/kernel/cpu.rs $(SRC)/kernel/bitops.rs $(SRC)/kernel/syscall.rs $(SRC)/lib/mod.rs $(SRC)/lib/unistd.rs \
 	$(SRC)/fs/file.rs $(SRC)/fs/mod.rs $(SRC)/mm/mm_type.rs $(SRC)/kernel/sched.rs $(SRC)/fs/ntfs.rs $(SRC)/kernel/time.rs \
-	$(SRC)/fs/ext4.rs
+	$(SRC)/fs/ext4.rs $(SRC)/fs/super_block.rs $(SRC)/kernel/device.rs
 ENTRYPOINT:=0x0xffff800000100000
 # RFLAGS+= target-feature=-crt-static
 RFLAGS:=$(strip ${RFLAGS})

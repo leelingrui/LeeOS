@@ -1,4 +1,4 @@
-use core::ffi::c_char;
+use core::ffi::{c_char, c_void};
 const EXT4_NAME_LEN : usize = 0xff;
 const EXT4_LABEL_MAX : usize = 0x10;
 
@@ -21,8 +21,16 @@ pub struct FileSystem
 }
 
 impl FileSystem {
-    fn load_super_block()
+    pub fn load_super_block(super_block : *mut c_void)
     {
+        unsafe
+        {
+            let sb = super_block as *mut Ext4SuperBlock;
+            if (*sb).s_magic == 0
+            {
+    
+            }
+        }
 
     }
 }
