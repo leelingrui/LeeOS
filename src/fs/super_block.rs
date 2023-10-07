@@ -24,7 +24,7 @@ fn mount_root()
     logk!("mounting root file system...\n");
     let device = get_device(1);
     assert!(device.dev_type != DeviceType::Null);
-    let sb = read_super_block(1);
+    let sb = read_super_block(3);
     FileSystem::load_super_block(sb);
 }
 

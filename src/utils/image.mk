@@ -11,18 +11,18 @@ $(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
 	sfdisk $@ < $(SRC)/utils/master.sfdisk
 	sudo losetup /dev/loop0 --partscan $@
 
-	sudo mkfs.ext4 -n 255 /dev/loop0p1
+	sudo mkfs.ext4 -c /dev/loop0p1
 
-	sudo mount /dev/loop0p1 /mount
+	sudo mount /dev/loop0p1 /mnt/LeeOSDisk
 
-	sudo chown ${USER} /mnt
+	sudo chown ${USER} /mnt/LeeOSDisk
 
-	mkdir -p /mnt/bin
-	mkdir -p /mnt/dev
-	mkdir -p /mnt/mnt
+	mkdir -p /mnt/LeeOSDisk/bin
+	mkdir -p /mnt/LeeOSDisk/dev
+	mkdir -p /mnt/LeeOSDisk/mnt
 
 
-	sudo umount /mnt
+	sudo umount /mnt/LeeOSDisk
 	sudo losetup -d /dev/loop0
 
 $(BUILD)/slave.img: $(SRC)/utils/slave.sfdisk
@@ -37,19 +37,19 @@ $(BUILD)/slave.img: $(SRC)/utils/slave.sfdisk
 	sudo losetup /dev/loop0 --partscan $@
 
 # 创建 minux 文件系统
-	sudo mkfs.ext4 /dev/loop0p1
+	sudo mkfs.ext4 -c /dev/loop0p1
 
 # 挂载文件系统
-	sudo mount /dev/loop0p1 /mnt
+	sudo mount /dev/loop0p1 /mnt/LeeOSDisk
 
 # 切换所有者
-	sudo chown ${USER} /mnt 
+	sudo chown ${USER} /mnt/LeeOSDisk
 
 # 创建文件
-	echo "slave root direcotry file..." > /mnt/hello.txt
+	echo "slave root direcotry file..." > /mnt/LeeOSDisk/hello.txt
 
 # 卸载文件系统
-	sudo umount /mnt
+	sudo umount /mnt/LeeOSDisk
 
 # 卸载设备
 	sudo losetup -d /dev/loop0

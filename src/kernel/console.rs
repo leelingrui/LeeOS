@@ -1,5 +1,8 @@
 use core::{ffi::c_char, fmt::Write};
 use core::fmt;
+use core::arch::asm;
+use crate::bochs_break;
+
 use super::{io, string};
 
 const MEM_BASE : u64 = 0xb8000;
@@ -195,6 +198,7 @@ impl Console
         self.set_cursor();
         self.set_screen();
         self.clear_all();
+        unsafe { bochs_break!() };
         crate::printk!("{START_STR}");
 
     }

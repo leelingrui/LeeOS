@@ -4,4 +4,4 @@ device: slave.img
 unit: sectors
 sector-size: 512
 
-slave.img1 : start=        2048, size=       63472, type=83
+slave.img1 : start=        0, size=       63472, type=83

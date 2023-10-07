@@ -93,7 +93,7 @@ pub static mut CONTROLLERS : [IdeCtrlT; IDE_CTRL_NR] = [IdeCtrlT::new(), IdeCtrl
 const IDE_CTRL_NR : usize = 2;
 const IDE_DISK_NR : usize = 2;
 
-#[repr(C)]
+#[repr(C, packed)]
 struct BootSector
 {
     code : [u8; 446],
@@ -467,10 +467,10 @@ unsafe fn ide_part_init(disk : &mut IdeDiskT)
     let boot = buf as *const BootSector;
     let mut var = 0;
     while var < IDE_PART_NR {
-        let entry = &(*boot).entry[var] as *const PartEntry;
+        let entry = core::ptr::addr_of!((*boot).entry[var]) as *const PartEntry;
         let ptr = disk as *mut IdeDiskT;
         let part = &mut disk.parts[var];
-        if (*entry).count == 0
+        if core::ptr::read_unaligned::<u32>(core::ptr::addr_of!((*entry).count)) == 0
         {
             var += 1;
             continue;
@@ -480,14 +480,14 @@ unsafe fn ide_part_init(disk : &mut IdeDiskT)
         assert!(str.len() < 8);
         compiler_builtins::mem::memcpy(part.name.as_ptr() as *mut u8, str.as_ptr(), str.len());
         logk!("part: {}\n", CStr::from_ptr(part.name.as_ptr() as *const c_char).to_str().unwrap());
-        logk!("    bootable {}\n", (*entry).bootable);
-        logk!("    start {}\n", (*entry).start);
-        logk!("    count {}\n", (*entry).count);
-        logk!("    system {:#x}\n", (*entry).system);
+        logk!("    bootable {}\n", core::ptr::read_unaligned::<u8>(core::ptr::addr_of!((*entry).bootable)));
+        logk!("    start {}\n", core::ptr::read_unaligned::<u32>(core::ptr::addr_of!((*entry).start)));
+        logk!("    count {}\n", core::ptr::read_unaligned::<u32>(core::ptr::addr_of!((*entry).count)));
+        logk!("    system {:#x}\n", core::ptr::read_unaligned::<u8>(core::ptr::addr_of!((*entry).system)));
         part.disk = ptr;
-        part.count = (*entry).count;
-        part.system = (*entry).system as u32;
-        part.start = (*entry).count;
+        part.count = core::ptr::read_unaligned::<u32>(core::ptr::addr_of!((*entry).count));
+        part.system = core::ptr::read_unaligned::<u8>(core::ptr::addr_of!((*entry).system)) as u32;
+        part.start = core::ptr::read_unaligned::<u32>(core::ptr::addr_of!((*entry).count));
         var += 1;
         if part.system == PART_FS_EXTENDED
         {
