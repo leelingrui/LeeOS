@@ -15,13 +15,11 @@ pub fn log2(mut x : f64) -> f64
     unsafe {
         asm!(
             "fld1",
-            "fld dword ptr [{input}]",
+            "fld qword ptr [{input}]",
             "fyl2x",
             "fwait",
-            "fstp dword ptr [{output}]",
+            "fstp qword ptr [{input}]",
             input = in(reg) &mut x as *mut f64,
-            output = out(reg) x
-
         );
         x
     }
@@ -41,9 +39,9 @@ pub fn ceil(mut x : f64)
         temp2 = (temp1 & 0xf3ff) | 0x800;
         asm!(
             "fldcw [{temp2_input}]",
-            "fld dword ptr [{input}]",
+            "fld qword ptr [{input}]",
             "frndint",
-            "fstp dword ptr [{input}]",
+            "fstp qword ptr [{input}]",
             temp2_input = in(reg) &mut temp2 as *mut u16,
             input = in(reg) &mut x as *mut f64,
         );
@@ -60,22 +58,20 @@ pub fn upround(x : u64, round : u64) -> u64
 }
 
 #[no_mangle]
-pub fn pow(mut x : f64, y : f64)
+pub fn pow(mut x : f64, y : f64) -> f64
 {
     unsafe {
         x = log2(x);
         asm!(
             "fld1",
-            "fld dword ptr [{inputy}]",
-            "fld dword ptr [{inputx}]",
-            "fyl2x",
-            "fadd",
-            "f2xm1",
-            "fstp dword ptr [{output}]",
+            "fld qword ptr [{inputy}]",
+            "fld qword ptr [{inputx}]",
+            "fmul",
+            "fscale",
+            "fstp qword ptr [{inputx}]",
             inputy = in(reg) &y as *const f64,
             inputx = in(reg) &mut x as *mut f64,
-            output = in(reg) &x as *const f64
         );
         x
-    };
+    }
 }

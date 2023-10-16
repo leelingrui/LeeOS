@@ -4,7 +4,7 @@ use alloc::alloc::{alloc, dealloc};
 
 use crate::{fs::ext4::Idx, logk};
 
-use super::{process::ProcessControlBlock, list::ListHead, io::IdeDiskT};
+use super::{process::ProcessControlBlock, list::ListHead, io::{IdeDiskT, IdePart}};
 const DEVICE_NR : usize = 0xff;
 static mut DEVICES : [Device; DEVICE_NR] = [Device::empty(); DEVICE_NR];
 
@@ -260,6 +260,19 @@ fn do_request(request : &mut RequestDescriptor) -> i64
     }
 }
 
+pub fn ide_part_ioctl(part : *mut IdePart, cmd : i64, _args : *mut c_void,_flagss : u32) -> i64
+{
+    unsafe
+    {
+        match cmd {
+            DEV_CMD_SECTOR_START => { (*part).start as i64 },
+            DEV_CMD_SECTOR_COUNT => { (*part).count as i64 },
+            _ => { panic!("unknow device command: {}", cmd) }
+        }
+    }
+
+}
+
 pub fn ide_disk_ioctl(disk : *mut IdeDiskT, cmd : i64, _args : *mut c_void,_flagss : u32) -> i64
 {
     unsafe
@@ -273,13 +286,14 @@ pub fn ide_disk_ioctl(disk : *mut IdeDiskT, cmd : i64, _args : *mut c_void,_flag
 
 }
 
-pub fn device_request(dev : DevT, buffer : *mut c_void, count : usize, idx : Idx, _flags : u32,_req_typee : DevReqType) -> i64
+pub fn device_request(mut dev : DevT, buffer : *mut c_void, count : usize, idx : Idx, _flags : u32,_req_typee : DevReqType) -> i64
 {
     let mut device = get_device(dev);
     assert!(device.dev_type == DeviceType::Block);
     let offset = (device_ioctl(dev, DEV_CMD_SECTOR_START, null_mut(), 0) as usize) + idx as usize;
     if device.parent != 0
     {
+        dev = device.parent;
         device = get_device(device.parent);
     }
     let request = create_request(buffer, count, dev, offset);

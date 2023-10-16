@@ -28,6 +28,7 @@ use super::device::DeviceIoCtlFn;
 use super::device::DeviceReadFn;
 use super::device::DeviceWriteFn;
 use super::device::device_install;
+use super::device::ide_part_ioctl;
 use super::interrupt;
 use super::semaphore;
 use super::io;
@@ -210,11 +211,11 @@ impl IdePart {
 #[derive(Clone, Copy)]
 pub struct IdePart
 {
-    name : [c_char; 8],
-    disk : *mut IdeDiskT,
-    system : u32,
-    start : u32,
-    count : u32
+    pub name : [c_char; 8],
+    pub disk : *mut IdeDiskT,
+    pub system : u32,
+    pub start : u32,
+    pub count : u32
 }
 
 pub struct IdeDiskT
@@ -487,7 +488,7 @@ unsafe fn ide_part_init(disk : &mut IdeDiskT)
         part.disk = ptr;
         part.count = core::ptr::read_unaligned::<u32>(core::ptr::addr_of!((*entry).count));
         part.system = core::ptr::read_unaligned::<u8>(core::ptr::addr_of!((*entry).system)) as u32;
-        part.start = core::ptr::read_unaligned::<u32>(core::ptr::addr_of!((*entry).count));
+        part.start = core::ptr::read_unaligned::<u32>(core::ptr::addr_of!((*entry).start));
         var += 1;
         if part.system == PART_FS_EXTENDED
         {
@@ -518,11 +519,23 @@ fn ide_install()
                     didx += 1;
                     continue;
                 }
-                let _dev_t = device_install(0, super::device::DeviceType::Block, disk as *const IdeDiskT as *mut c_void,
+                let dev_t = device_install(0, super::device::DeviceType::Block, disk as *const IdeDiskT as *mut c_void,
                  CStr::from_ptr(disk.name.as_ptr() as *mut i8).to_str().unwrap(), 0, 0,
-                
-                Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(device::ide_disk_ioctl as *mut())) , Some(core::mem::transmute::<*mut(), DeviceReadFn>(ide_pio_sync_read as *mut())), Option::None);
+                Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(device::ide_disk_ioctl as *mut())), 
+                Some(core::mem::transmute::<*mut(), DeviceReadFn>(ide_pio_sync_read as *mut())), Option::None);
                 didx += 1;
+                let mut i = 0;
+                while i < IDE_PART_NR {
+                    let part = &disk.parts[i];
+                    if part.count != 0
+                    {
+                        device_install(0, device::DeviceType::Block, part as *const IdePart as *mut c_void,
+                             CStr::from_ptr(part.name.as_ptr() as *mut i8).to_str().unwrap(), dev_t,
+                              0, Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(ide_part_ioctl as *mut())),
+                               Some(core::mem::transmute::<*mut(), DeviceReadFn>(part_read as *mut())), Option::None);
+                    }
+                    i += 1;
+                }
                 // part install
             }
             cidx += 1;
@@ -622,6 +635,20 @@ pub fn ide_early_pio_sync_read(start_block : u32, num_blocks : u8, dst : *mut u8
                 var += 1;
             }
         }
+    }
+}
+
+pub fn part_read(part : &IdePart, start_block : u32, num_blocks : u8, dst : *mut u8)
+{
+    part_sync_read(part, start_block, num_blocks, dst)
+}
+
+#[inline]
+pub fn part_sync_read(part : &IdePart, start_block : u32, num_blocks : u8, dst : *mut u8)
+{
+    unsafe
+    {
+        ide_pio_sync_read(&(*part.disk), start_block + part.start, num_blocks, dst)        
     }
 }
 

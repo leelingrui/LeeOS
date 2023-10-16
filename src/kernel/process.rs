@@ -40,6 +40,11 @@ pub struct PtRegs
     pub ss : u64
 }
 
+pub fn sys_yield()
+{
+    
+}
+
 fn user_function()
 {
     let str = "print from usermode\n";

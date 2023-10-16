@@ -1,5 +1,7 @@
 use core::sync::atomic;
 
+use super::process::sys_yield;
+
 
 pub struct  SpinLock
 {
@@ -11,6 +13,57 @@ impl Default for SpinLock {
         Self { counting: atomic::AtomicI64::new(0) }
     }
 }
+
+pub struct RWLock
+{
+    reader_num : u64,
+    change_mutex : SpinLock,
+    writer_mutex : SpinLock
+}
+
+impl RWLock {
+    pub fn new() -> Self
+    {
+        Self { reader_num: 0, change_mutex: SpinLock::new(1), writer_mutex: SpinLock::new(1) }
+    }
+
+    pub fn rdunlock(&mut self)
+    {
+        self.change_mutex.acquire(1);
+        self.reader_num -= 1;
+        self.change_mutex.release(1);
+    }
+
+    pub fn wrunlock(&mut self)
+    {
+        self.writer_mutex.release(1);
+        self.change_mutex.release(1);
+    }
+
+    pub fn rdlock(&mut self)
+    {
+        self.writer_mutex.acquire(1);
+        self.change_mutex.acquire(1);
+        self.reader_num += 1;
+        self.change_mutex.release(1);
+        self.writer_mutex.release(1);
+    }
+
+    pub fn wrlock(&mut self)
+    {
+        self.writer_mutex.acquire(1);
+        loop  {
+            self.change_mutex.acquire(1);
+            if self.reader_num == 0
+            {
+                break;
+            }
+            self.change_mutex.release(1);
+            sys_yield();
+        }
+    }
+}
+
 
 impl SpinLock
 {
@@ -52,10 +105,10 @@ impl SpinLock
         }
     }
 
-    pub const fn new(flag : i64) -> SpinLock
+    pub const fn new(start_cnt : i64) -> SpinLock
     {
         SpinLock {
-            counting : atomic::AtomicI64::new(flag)
+            counting : atomic::AtomicI64::new(start_cnt)
         }
     }
 }

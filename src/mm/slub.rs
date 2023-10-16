@@ -245,7 +245,7 @@ impl KmemCache {
             if self.node[nid].nr_partial > 0
             {
                 let mut slab_discriptor = self.node[nid].partial.next as *mut Slab;
-                while slab_discriptor.is_null() {
+                while (*slab_discriptor).free_list.is_null() {
                     slab_discriptor = (*slab_discriptor).next();
                 }
                 let result = (*slab_discriptor).free_list;

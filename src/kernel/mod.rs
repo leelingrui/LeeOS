@@ -19,3 +19,4 @@ pub mod syscall;
 pub mod sched;
 pub mod time;
 pub mod device;
+pub mod buffer;

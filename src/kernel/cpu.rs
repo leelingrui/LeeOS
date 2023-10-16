@@ -11,9 +11,9 @@ pub const EXTENDED_PROCESSOR_SIGNATURE_AND_FEATURE : u32 = 0x80000001;
 
 bitflags!
 {
-    pub struct Cr0RegLabel : i32
+    pub struct Cr0RegLabel : u64
     {
-        const CR0_PE = 1 << 0;// Protection Enable 启用保护模式
+        const CR0_PE = 1 << 0; // Protection Enable 启用保护模式
         const CR0_MP = 1 << 1;  // Monitor Coprocessor
         const CR0_EM = 1 << 2;  // Emulation 启用模拟，表示没有 FPU
         const CR0_TS = 1 << 3;  // Task Switch 任务切换，延迟保存浮点环境

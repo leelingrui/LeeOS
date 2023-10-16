@@ -9,9 +9,20 @@ fn fpu_handler(vector : u64)
 {
     logk!("fpu exception occured\n");
     assert!(vector == interrupt::INTR_NM);
+    set_cr0(get_cr0() & !(Cr0RegLabel::CR0_EM.bits() | Cr0RegLabel::CR0_TS.bits()));
     let running_process = running_process();
     // assert(task->uid);
-    // fpu_enable();
+    fpu_enable();
+}
+
+fn fpu_enable()
+{
+    unsafe
+    {
+        asm!("fnclex");
+        asm!("fninit");
+    }
+
 }
 
 fn fpu_check() -> bool
@@ -26,6 +37,7 @@ fn fpu_check() -> bool
         unsafe
         {
             let ret : u32;
+
             let test_word = 0x55aau32;
             asm!(
                 "mov rdx, cr0",
@@ -36,7 +48,7 @@ fn fpu_check() -> bool
                 "mov rax, [{ctrl_word}]",
                 out("rax") ret,
                 ctrl_word = in(reg) &test_word as *const u32,
-                in("rcx") (-1 - cpu::Cr0RegLabel::CR0_EM.bits() - cpu::Cr0RegLabel::CR0_TS.bits()),
+                in("rcx") (0xffffffffffffffff - cpu::Cr0RegLabel::CR0_EM.bits() - cpu::Cr0RegLabel::CR0_TS.bits()),
                 out("rdx") _
             );
             ret == 0

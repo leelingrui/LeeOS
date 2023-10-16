@@ -7,7 +7,6 @@
 #![feature(allocator_api)]
 #![no_std]
 use core::arch::global_asm;
-use core::arch::asm;
 extern crate alloc;
 
 use kernel::{console::console_init, global::gdt_init, interrupt::interrupt_init};

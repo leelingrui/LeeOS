@@ -30,17 +30,14 @@ $(BUILD)/slave.img: $(SRC)/utils/slave.sfdisk
 # 创建一个 32M 的硬盘镜像
 	yes | bximage -q -hd=32 -func=create -sectsize=512 -imgmode=flat $@
 
-# 执行硬盘分区
-	sfdisk $@ < $(SRC)/utils/slave.sfdisk
-
 # 挂载设备
 	sudo losetup /dev/loop0 --partscan $@
 
-# 创建 minux 文件系统
-	sudo mkfs.ext4 -c /dev/loop0p1
+# 创建 ext4 文件系统
+	sudo mkfs.ext4 -c /dev/loop0
 
 # 挂载文件系统
-	sudo mount /dev/loop0p1 /mnt/LeeOSDisk
+	sudo mount /dev/loop0 /mnt/LeeOSDisk
 
 # 切换所有者
 	sudo chown ${USER} /mnt/LeeOSDisk
