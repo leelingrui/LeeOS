@@ -81,7 +81,7 @@ impl Buffer {
         {
             panic!("read unavaliable buffer");
         }
-        if len + offset < self.buffer_size
+        if len + offset <= self.buffer_size
         {
             self.rw_lock.rdlock(); 
             unsafe { compiler_builtins::mem::memcpy(dst as *mut u8, self.buffer.offset(offset as isize) as *mut u8, len) };

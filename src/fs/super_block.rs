@@ -19,6 +19,15 @@ impl Superblock {
     }
 }
 
+
+
+unsafe fn test_fs()
+{
+    let root = FS.get_iroot();
+    let buffer = alloc::alloc::alloc(Layout::from_size_align_unchecked(4096, 1)) as *mut c_void;
+    let _read_size = FS.read_inode(2, root, buffer, 4096, 0);
+}
+
 fn mount_root()
 {
     logk!("mounting root file system...\n");
@@ -26,15 +35,20 @@ fn mount_root()
     assert!(device.dev_type != DeviceType::Null);
     let sb = read_super_block(2);
     unsafe { FS.load_root_super_block(2, sb) };
-
+    unsafe { test_fs() };
 }
 
 fn read_super_block(dev : DevT) -> *mut c_void
 {
-    let sb = unsafe { alloc::alloc::alloc(Layout::new::<[c_void; 1024]>()) };
-    let block1 = disk_read(dev, 2, 2);
-    unsafe { compiler_builtins::mem::memcpy(sb, block1 as *mut u8, 1024) };
-    sb as *mut c_void
+    unsafe
+    {
+        let sb = alloc::alloc::alloc(Layout::new::<[c_void; 1024]>());
+        let block1 = disk_read(dev, 2, 2);
+        (*block1).read_from_buffer(sb as *mut c_void, 0, 1024);
+        // unsafe { compiler_builtins::mem::memcpy(sb, block1 as *mut u8, 1024) };
+        sb as *mut c_void
+    }
+
 }
 
 

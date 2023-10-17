@@ -16,9 +16,26 @@ pub struct FileSystem
 }
 
 impl FileSystem {
+    pub fn get_iroot(&self) -> *mut Inode
+    {
+        self.iroot
+    }
+
     const fn new() -> Self
     {
         Self { logical_part: BTreeMap::new(), iroot: null_mut(), root_dev: 0, imount: null_mut() }
+    }
+
+    pub fn read_inode(&mut self, dev : DevT, inode : *mut Inode, buffer : *mut c_void, len : usize, offset : usize) -> i64
+    {
+        let logic_part = self.logical_part.get_mut(&dev);
+        if logic_part.is_some()
+        {
+            logic_part.unwrap().read_inode(inode, buffer, len, offset)
+        }
+        else {
+            panic!("not fund device {}\n", dev);
+        }
     }
 
     pub fn load_root_super_block(&mut self, dev : DevT, super_block : *mut c_void)
@@ -57,10 +74,14 @@ impl FileSystem {
     }
     fn load_group_desc(dev : DevT, idx : Idx) -> *mut Ext4GroupDesc
     {
-        let desc = unsafe { alloc::alloc::alloc(Layout::new::<Ext4GroupDesc>()) as *mut Ext4GroupDesc };
-        let src = disk_read(dev, idx, 2);
-        unsafe { compiler_builtins::mem::memcpy(desc as *mut u8, src as *mut u8, size_of::<Ext4GroupDesc>()) };
-        desc
+        unsafe
+        {
+            let desc = unsafe { alloc::alloc::alloc(Layout::new::<Ext4GroupDesc>()) as *mut Ext4GroupDesc };
+            let src = disk_read(dev, idx, 2);
+            (*src).read_from_buffer(desc as *mut c_void, 0, size_of::<Ext4GroupDesc>());
+            desc
+        }
+
     }
 }
 
@@ -146,7 +167,7 @@ impl LogicalPart {
         {
             if buffer.is_null()
             {
-                panic!("try release null buffer");
+                panic!("try release null buffer\n");
             }
             (*buffer).count -= 1;
             if (*buffer).count != 0
@@ -188,7 +209,7 @@ impl LogicalPart {
         assert!(self.logic_block_count as u64 >= idx);
         match self.fs_type {
             FSType::Ext4 => ext4_get_logic_block(self, inode, idx, create),
-            _ => panic!("unsupport fs type")
+            _ => panic!("unsupport fs type\n")
         }
     }
 
@@ -196,7 +217,7 @@ impl LogicalPart {
     {
         match self.fs_type {
             FSType::Ext4 => ext4_inode_read(self, inode, buffer, len, offset),
-            _ => panic!("unsupport fs type!"),
+            _ => panic!("unsupport fs type!\n"),
         }
     }
 
@@ -270,7 +291,7 @@ impl LogicalPart {
                 {
                     ext4_inode_format(inode, (*buffer).buffer, self.logic_block_size, inode_idx);
                 }
-                _ => panic!("unsupport fs")
+                _ => panic!("unsupport fs\n")
             }
             inode
         }

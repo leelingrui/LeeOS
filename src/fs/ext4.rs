@@ -37,7 +37,7 @@ bitflags::bitflags! {
         const IFCHR = 0o20000;  // 字符设备文件
         const IFIFO = 0o10000;  // FIFO 特殊文件
         const IFLNK = 0o120000;  // 符号连接
-        const IFSOCK = 0o140000; // 套接字
+        const IFSOCK = 0o140000; // SOCKET file
 
     }
 }

@@ -287,8 +287,6 @@ load_code_segment:
     pop edi
     pop ecx
     pop ebx
-    test ebx, 0xff
-    jz .read_block
 .read_block:
     movzx esi, bl
     add ecx, esi
@@ -298,11 +296,17 @@ load_code_segment:
     cmp ebx, 0
     je .read_finish
     sub ebx, 0x100
+    push ebx; read block num
+    push ecx; start block
+    push edi; dst position
     call read_disk
+    pop edi
+    pop ecx
+    pop ebx
     cmp ebx, 0
     add ecx, 0x100
     add edi, 0x100 * 512
-    jmp .next2
+    jmp .read_block
 .read_finish
     mov eax, 1
     ret

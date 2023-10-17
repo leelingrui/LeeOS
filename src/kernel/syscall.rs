@@ -76,7 +76,7 @@ pub fn syscall_init()
     // cpu::wrmsr(0x174, 0x8);
     // cpu::wrmsr(0x175, 0xffff800000090000u64);
     // cpu::wrmsr(0x176, _syscall_start as u64);
-    logk!("initialating system call");
+    logk!("initialating system call\n");
     cpu::wrmsr(0xc0000081, (0x8u64 << 32) | (0x2bu64 << 48) as u64);
     cpu::wrmsr(0xc0000082, _syscall_start as u64);
     cpu::wrmsr(0xc0000080, 0x501);

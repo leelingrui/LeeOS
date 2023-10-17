@@ -297,7 +297,7 @@ pub fn device_request(mut dev : DevT, buffer : *mut c_void, count : usize, idx :
         device = get_device(device.parent);
     }
     let request = create_request(buffer, count, dev, offset);
-    logk!("dev {}, request idx {}", dev, offset);
+    logk!("dev {}, request idx {}\n", dev, offset);
     let empty = device.empty_req_list();
     device.insert_request(request);
     if !empty
