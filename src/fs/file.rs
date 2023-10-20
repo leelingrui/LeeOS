@@ -2,9 +2,9 @@ use core::{ffi::{c_char, c_void}, alloc::Layout, ptr::null_mut, mem::size_of};
 
 use alloc::{vec::Vec, collections::BTreeMap, alloc::dealloc};
 
-use crate::{kernel::{console::CONSOLE, device::DevT, process::PCB, bitmap::BitMap, math::pow, buffer::Buffer}, mm::memory::PAGE_SIZE, fs::ext4::ext4_get_logic_block};
+use crate::{kernel::{console::CONSOLE, device::DevT, process::PCB, bitmap::BitMap, math::{pow, self}, buffer::Buffer}, mm::memory::PAGE_SIZE, fs::ext4::ext4_get_logic_block_idx};
 
-use super::ext4::{Idx, Ext4SuperBlock, Ext4GroupDesc, ext4_inode_read};
+use super::ext4::{Idx, Ext4SuperBlock, Ext4GroupDesc, ext4_inode_read, Ext4Inode};
 pub static mut FS : FileSystem = FileSystem::new();
 
 pub struct FileSystem
@@ -53,6 +53,7 @@ impl FileSystem {
             new_sb.logic_block_count = (((*sb).s_blocks_count_hi as usize) << 32) + (*sb).s_blocks_count_lo as usize;
             new_sb.inode_count = (*sb).s_inodes_count as usize;
             new_sb.inode_per_group = (*sb).s_inodes_per_group as usize;
+            new_sb.blocks_per_group = (*sb).s_blocks_per_group as usize;
             let mut var = 0;
             let group_num = ((*sb).s_blocks_count_lo as i64 + (((*sb).s_blocks_count_hi as i64) << 32)) / (*sb).s_blocks_per_group as i64;
             // init group desc
@@ -62,8 +63,9 @@ impl FileSystem {
                 let new_desc = new_sb.group_desc.last_mut().unwrap();
                 new_desc.group_desc_ptr = desc;
                 new_desc.load_bitmaps();
+                new_desc.inode_table_offset = (((*desc).bg_inode_table_hi as u64) << 32) + (*desc).bg_inode_table_lo as u64;
+                new_desc.data_block_start = new_desc.inode_table_offset as usize + math::upround((*sb).s_inodes_per_group as u64 * 256, new_sb.logic_block_size as u64 * 1024) as usize / (new_sb.logic_block_size as usize * 1024);
                 var += 1;
-                new_desc.inode_table_offset = (((*desc).bg_inode_table_hi as u64) << 32) + (*desc).bg_inode_table_lo as u64
             }
             // get root dir
             self.iroot = new_sb.get_inode(2);
@@ -92,20 +94,21 @@ pub const STDERR : u32 = 2;
 pub const EOF : i64 = -1;
 
 
-struct GroupDesc
+pub struct GroupDesc
 {
     logical_block_bitmap : BitMap,
     inode_bitmap : BitMap,
     group_desc_ptr : *mut Ext4GroupDesc,
     group_desc_no : u32,
     parent : *const LogicalPart,
-    inode_table_offset : Idx
+    inode_table_offset : Idx,
+    pub data_block_start : usize
 }
 
 impl GroupDesc {
     fn new(parent : &LogicalPart) -> Self
     {
-        Self { logical_block_bitmap: BitMap::null_bitmap(), inode_bitmap: BitMap::null_bitmap(), group_desc_ptr: null_mut(), group_desc_no: 0, parent: parent as *const LogicalPart, inode_table_offset: 0 }
+        Self { logical_block_bitmap: BitMap::null_bitmap(), inode_bitmap: BitMap::null_bitmap(), group_desc_ptr: null_mut(), group_desc_no: 0, parent: parent as *const LogicalPart, inode_table_offset: 0, data_block_start: 0 }
     }
 
     fn load_bitmaps(&mut self)
@@ -138,9 +141,9 @@ pub struct LogicalPart
     pub inode_count : usize,
     pub inode_map : BTreeMap<Idx, *mut Inode>,
     pub data_map : BTreeMap<Idx, *mut Buffer>,
-    pub inode_per_group : usize
+    pub inode_per_group : usize,
+    pub blocks_per_group : usize
 }
-
 
 #[derive(PartialEq)]
 enum FSType {
@@ -150,7 +153,7 @@ enum FSType {
 
 pub struct Inode
 {
-    pub inode_block_buffer : *mut c_void,
+    pub inode_block_buffer : *mut Buffer,
     pub inode_desc_ptr : *mut c_void,
     pub count : u32,
     pub rx_waiter : *mut PCB,
@@ -204,11 +207,11 @@ impl LogicalPart {
 
     }
 
-    pub fn get_logic_block(&mut self, inode : *mut Inode, idx : Idx, create : bool) -> Idx
+    pub fn get_logic_block_idx(&mut self, inode : *mut Inode, idx : Idx, create : bool) -> Idx
     {
         assert!(self.logic_block_count as u64 >= idx);
         match self.fs_type {
-            FSType::Ext4 => ext4_get_logic_block(self, inode, idx, create),
+            FSType::Ext4 => ext4_get_logic_block_idx(self, inode, idx, create),
             _ => panic!("unsupport fs type\n")
         }
     }
@@ -223,7 +226,7 @@ impl LogicalPart {
 
     fn new() -> Self
     {
-        Self { fs_type: FSType::None, super_block: null_mut(), group_desc: Vec::new(), logic_block_size: 0, logic_block_count: 0, inode_count: 0, dev: 0, inode_map: BTreeMap::new(), inode_per_group: 0, data_map: BTreeMap::new() }
+        Self { fs_type: FSType::None, super_block: null_mut(), group_desc: Vec::new(), logic_block_size: 0, logic_block_count: 0, inode_count: 0, dev: 0, inode_map: BTreeMap::new(), inode_per_group: 0, data_map: BTreeMap::new(), blocks_per_group: 0 }
     }
 
     fn read_block(&self, logic_block_no : usize) -> *mut Buffer
@@ -284,12 +287,12 @@ impl LogicalPart {
             self.inode_map.insert(inode_idx, inode);
             let block_no = self.get_inode_logical_block(inode_idx);
             let buffer = self.read_block(block_no as usize);
-            (*inode).inode_block_buffer = (*buffer).buffer;
+            (*inode).inode_block_buffer = buffer;
             match self.fs_type
             {
                 FSType::Ext4 =>
                 {
-                    ext4_inode_format(inode, (*buffer).buffer, self.logic_block_size, inode_idx);
+                    ext4_inode_format(inode, buffer, self.logic_block_size, inode_idx);
                 }
                 _ => panic!("unsupport fs\n")
             }
@@ -299,10 +302,10 @@ impl LogicalPart {
 }
 
 #[inline]
-fn ext4_inode_format(inode : *mut Inode, buffer : *mut c_void, logic_block_size : i32, nr : Idx)
+fn ext4_inode_format(inode : *mut Inode, buffer : *mut Buffer, logic_block_size : i32, nr : Idx)
 {
     unsafe {
-        (*inode).inode_block_buffer = buffer.offset((256 * (nr - 1) % (1024 * logic_block_size as u64)).try_into().unwrap());
+        (*inode).inode_desc_ptr = (*buffer).buffer.offset((256 * (nr - 1) % (1024 * logic_block_size as u64)).try_into().unwrap());
     }
 }
 

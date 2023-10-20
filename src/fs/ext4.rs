@@ -63,7 +63,39 @@ fn get_logic_block(logical_part : &mut LogicalPart, inode : *mut Inode, idx : Id
     }
 }
 
-pub fn ext4_get_logic_block(logical_part : &mut LogicalPart, inode : *mut Inode, idx : Idx, create : bool) -> Idx
+fn get_data_block_group_idx(logical_part : &LogicalPart, idx : Idx) -> usize
+{
+    idx as usize / logical_part.blocks_per_group
+}
+
+pub fn ext4_get_logic_block_idx(logical_part : &mut LogicalPart, inode : *mut Inode, idx : Idx, create : bool) -> Idx
+{
+    unsafe
+    {
+        let ext4_inode = (*inode).inode_desc_ptr as *mut Ext4Inode;
+        let block_desc_node = &mut (*ext4_inode).i_block as *mut i32 as *mut Ext4InodeBlockDesc;
+        assert!((*block_desc_node).head.eh_magic as u16 == 0xf30a);
+        loop {
+            if (*block_desc_node).head.eh_depth == 0
+            {
+                let mut var = 0;
+                while var < 4 {
+                    if (*block_desc_node).node[var].leaf_node.ee_block as u64 <= idx && ((*block_desc_node).node[var].leaf_node.ee_block as u64 + (*block_desc_node).node[var].leaf_node.ee_len as u64) > idx
+                    {
+                        return (*block_desc_node).node[var].leaf_node.ee_start_lo as Idx + (((*block_desc_node).node[var].leaf_node.ee_start_hi as Idx) << 32);
+                    }
+                    var += 1;
+                }
+                panic!("read file block out of range!\n");
+            }
+            else {
+                unimplemented!();
+            }
+        }
+    }
+}
+
+pub fn ext2_or_ext3_get_logic_block_idx(logical_part : &mut LogicalPart, inode : *mut Inode, idx : Idx, create : bool) -> Idx
 {
     let mut level = 0;
     if (idx as usize) < EXT4_IND_BLOCK
@@ -90,20 +122,20 @@ pub fn ext4_inode_read(logical_part : &mut LogicalPart, inode : *mut Inode, mut 
     {
         let ext4_desc_ptr = (*inode).inode_desc_ptr as *mut Ext4Inode;
         assert!(is_file((*ext4_desc_ptr).i_mode) || is_dir((*ext4_desc_ptr).i_mode));
-        let read_num = ((*ext4_desc_ptr).i_size_lo as i64 + (((*ext4_desc_ptr).i_size_high as i64) << 32)) as usize;
-        if offset >= read_num
+        let file_size = ((*ext4_desc_ptr).i_size_lo as i64 + (((*ext4_desc_ptr).i_size_high as i64) << 32)) as usize;
+        if offset >= file_size
         {
             return EOF;
         }
         let mut read_begin = offset;
-        let mut left = min(len, read_num - offset);
+        let mut left = min(len, file_size - offset);
         while left > 0 {
-            let idx = offset as u64 / 1024 / logical_part.logic_block_size as u64;
+            let mut idx = offset as u64 / 1024 / logical_part.logic_block_size as u64;
+            idx = logical_part.get_logic_block_idx(inode, idx, false);
             let buffer = logical_part.get_buffer(idx);
             if !(*buffer).is_avaliable()
             {
-                let idx = logical_part.get_logic_block(inode, idx, false);
-                (*buffer).read_from_device(logical_part.dev, idx, 2 * logical_part.logic_block_size as usize);
+                (*buffer).read_from_device(logical_part.dev, idx * 2 * logical_part.logic_block_size as Idx, 2 * logical_part.logic_block_size as usize);
             }
             let start = read_begin % (1024 * logical_part.logic_block_size as usize);
             let read_num = min((1024 * logical_part.logic_block_size as usize) - start, left);
@@ -182,6 +214,19 @@ pub struct PartEntry
 }
 
 #[repr(C)]
+pub union Ext4InodeDescTree {
+    leaf_node : core::mem::ManuallyDrop<Ext4Extent>,
+    nonleaf : core::mem::ManuallyDrop<Ext4ExtentIdx>
+}
+
+#[repr(C)]
+pub struct Ext4InodeBlockDesc
+{
+    head : Ext4ExtentHeader,
+    node : [Ext4InodeDescTree; 4]
+}
+
+#[repr(C)]
 pub struct Ext4ExtentHeader
 {
     eh_magic : i16,
@@ -191,13 +236,14 @@ pub struct Ext4ExtentHeader
     eh_generation : i32
 }
 
-struct Ext4DirEntry2
+#[repr(C)]
+pub struct Ext4DirEntry2
 {  
-    inode : i32,          /* Inode number */  
-    rec_len : i16,         /* Directory entry length */  
-    name_len : u8,       /* Name length */  
-    file_type : u8,  
-    name : [c_char; EXT4_NAME_LEN]    /* File name */  
+    pub inode : i32,          /* Inode number */  
+    pub rec_len : i16,         /* Directory entry length */  
+    pub name_len : u8,       /* Name length */  
+    pub file_type : u8,  
+    pub name : [c_char; EXT4_NAME_LEN]    /* File name */  
 }
 
 #[repr(C)]
@@ -456,6 +502,7 @@ pub struct Ext4SuperBlock
     pub s_checksum : i32		/* crc32c(superblock) */
 }
 
+#[repr(C)]
 pub struct Ext4Extent {
 	pub ee_block : i32,	/* exient叶子的第一个数据块号 */
 	pub ee_len : i16,		/* exient叶子的数据块数量 */

@@ -220,7 +220,7 @@ pub struct IdePart
 
 pub struct IdeDiskT
 {
-    pub name : [char; 8],                  // 磁盘名称
+    pub name : [c_char; 8],                  // 磁盘名称
     pub ctrl : *mut IdeCtrlT,       // 控制器指针
     pub selector : u8,                   // 磁盘选择
     pub master : bool,                   // 主盘
@@ -235,14 +235,14 @@ pub struct IdeDiskT
 impl IdeDiskT {
     pub const fn empty() -> Self
     {
-        Self { name: ['\0'; 8], ctrl: null_mut(), selector: 0, master: false, total_lba: 0, cylinders: 0, heads: 0, sectors: 0, lock: SpinLock::new(1), parts: [IdePart::empty(); IDE_PART_NR] }
+        Self { name: [0; 8], ctrl: null_mut(), selector: 0, master: false, total_lba: 0, cylinders: 0, heads: 0, sectors: 0, lock: SpinLock::new(1), parts: [IdePart::empty(); IDE_PART_NR] }
     }
 
     pub fn new(ctrl_block : *mut IdeCtrlT, disk_selector : u8, is_master : bool, lba_num : u32, heads : u32, cylinders : u32, sectors : u32) -> IdeDiskT
     {
         IdeDiskT
         {
-            name : ['\0'; 8],
+            name : [0; 8],
             ctrl : ctrl_block,
             selector : disk_selector,
             master : is_master,
@@ -262,7 +262,7 @@ unsafe impl Sync for IdeCtrlT {
 
 pub struct IdeCtrlT
 {
-    pub name : [char; 8],
+    pub name : [c_char; 8],
     pub lock : semaphore::SpinLock,
     pub control : u8,
     pub iobase : u16,
@@ -275,7 +275,7 @@ impl IdeCtrlT {
     {
         IdeCtrlT
         {
-            name : ['\0'; 8],
+            name : [0; 8],
             lock : semaphore::SpinLock::new(1),
             iobase : 0,
             control: 0,
@@ -512,6 +512,7 @@ fn ide_install()
         while cidx < IDE_CTRL_NR {
             let ctrl = &mut CONTROLLERS[cidx];
             let mut didx = 0;
+            
             while didx < IDE_DISK_NR {
                 let disk = &ctrl.disks[didx];
                 if disk.total_lba == 0
@@ -519,8 +520,7 @@ fn ide_install()
                     didx += 1;
                     continue;
                 }
-                let dev_t = device_install(0, super::device::DeviceType::Block, disk as *const IdeDiskT as *mut c_void,
-                 CStr::from_ptr(disk.name.as_ptr() as *mut i8).to_str().unwrap(), 0, 0,
+                let dev_t = device_install(0, super::device::DeviceType::Block, disk as *const IdeDiskT as *mut c_void, 0, 0,
                 Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(device::ide_disk_ioctl as *mut())), 
                 Some(core::mem::transmute::<*mut(), DeviceReadFn>(ide_pio_sync_read as *mut())), Option::None);
                 didx += 1;
@@ -529,8 +529,7 @@ fn ide_install()
                     let part = &disk.parts[i];
                     if part.count != 0
                     {
-                        device_install(0, device::DeviceType::Block, part as *const IdePart as *mut c_void,
-                             CStr::from_ptr(part.name.as_ptr() as *mut i8).to_str().unwrap(), dev_t,
+                        device_install(0, device::DeviceType::Block, part as *const IdePart as *mut c_void, dev_t,
                               0, Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(ide_part_ioctl as *mut())),
                                Some(core::mem::transmute::<*mut(), DeviceReadFn>(part_read as *mut())), Option::None);
                     }
@@ -552,14 +551,15 @@ pub fn ide_ctrl_init()
         let mut cidx = 0;
         while cidx < IDE_CTRL_NR {
             let ctrl = &mut CONTROLLERS[cidx];
-
+            let mut ctrl_name = String::new();
+            *ctrl = IdeCtrlT::new();
+            let _ = core::fmt::write(&mut ctrl_name, format_args!("ide{}", cidx));
+            compiler_builtins::mem::memcpy(ctrl.name.as_mut_ptr() as *mut u8, ctrl_name.as_ptr(), ctrl_name.len());
             if cidx != 0
             {
-                *ctrl = IdeCtrlT::new();
                 ctrl.iobase = IDE_IOBASE_SECONDARY;
             }
             else {
-                *ctrl = IdeCtrlT::new();
                 ctrl.iobase = IDE_IOBASE_PRIMARY;
             }
             (*ctrl).control = inb(ctrl.iobase + IDE_CONTROL);
@@ -569,9 +569,9 @@ pub fn ide_ctrl_init()
             {
                 let ctrl_ptr = ctrl as *mut IdeCtrlT;
                 let disk = &mut ctrl.disks[didx];
-                let mut str = String::new(); 
-                let _ = core::fmt::write(&mut str, format_args!("hd{}", ('a' as usize + cidx * 2 + didx) as u8 as char));
-                compiler_builtins::mem::memcpy(disk.name.as_mut_ptr() as *mut u8, str.as_ptr(), str.len());
+                let mut disk_name_str = String::new(); 
+                let _ = core::fmt::write(&mut disk_name_str, format_args!("hd{}", ('a' as usize + cidx * 2 + didx) as u8 as char));
+                compiler_builtins::mem::memcpy(disk.name.as_mut_ptr() as *mut u8, disk_name_str.as_ptr(), disk_name_str.len());
                 disk.ctrl = ctrl_ptr;
                 if didx == 0
                 {

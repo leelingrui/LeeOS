@@ -178,7 +178,7 @@ fn get_null_device_no() -> usize
 
 }
 
-pub fn device_install(mut dev_no : DevT, dev_type : DeviceType, ptr : *mut c_void, name : &str, parent : DevT, flags : u32, ioctl_fn : Option<DeviceIoCtlFn>, read_fn : Option<DeviceReadFn>, write_fn : Option<DeviceWriteFn>) -> DevT
+pub fn device_install(mut dev_no : DevT, dev_type : DeviceType, ptr : *mut c_void, parent : DevT, flags : u32, ioctl_fn : Option<DeviceIoCtlFn>, read_fn : Option<DeviceReadFn>, write_fn : Option<DeviceWriteFn>) -> DevT
 {
     unsafe
     {
@@ -248,15 +248,12 @@ fn create_request(buffer : *mut c_void, count : usize, dev : u32, offset : usize
 
 fn do_request(request : &mut RequestDescriptor) -> i64
 {
-    unsafe
-    {
-        match request.req_type {
-            DevReqType::Read => { 
-                let device = get_device(request.dev_idx);
-                (device.read.unwrap())(device.ptr, request.idx as u64, request.count, request.buffer, request.flags)
-            },
-            DevReqType::Write => todo!(),
-        }
+    match request.req_type {
+        DevReqType::Read => { 
+            let device = get_device(request.dev_idx);
+            (device.read.unwrap())(device.ptr, request.idx as u64, request.count, request.buffer, request.flags)
+        },
+        DevReqType::Write => todo!(),
     }
 }
 
