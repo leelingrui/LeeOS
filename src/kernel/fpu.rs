@@ -1,7 +1,7 @@
 use core::{arch::asm, ptr::null_mut};
-use crate::{logk, kernel::{cpu::{set_cr0, get_cr0, Cr0RegLabel}, interrupt::HandlerFn}, bochs_break};
+use crate::{logk, kernel::{cpu::{set_cr0, get_cr0, Cr0RegLabel}, interrupt::HandlerFn, sched}, bochs_break};
 
-use super::{cpu, process::{self, PCB, running_process}, interrupt};
+use super::{cpu, process::{self, PCB}, interrupt};
 
 static mut LAST_FPU_TASK : *mut process::PCB = null_mut();
 
@@ -10,7 +10,7 @@ fn fpu_handler(vector : u64)
     logk!("fpu exception occured\n");
     assert!(vector == interrupt::INTR_NM);
     set_cr0(get_cr0() & !(Cr0RegLabel::CR0_EM.bits() | Cr0RegLabel::CR0_TS.bits()));
-    let running_process = running_process();
+    let running_process = sched::get_current_running_process();
     // assert(task->uid);
     fpu_enable();
 }

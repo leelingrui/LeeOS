@@ -1,7 +1,7 @@
 use core::{ptr::null_mut, ffi::{c_void, c_char}};
-use crate::{fs::file::{self, sys_write}, bochs_break, logk};
+use crate::{fs::file::sys_write, logk, kernel::process};
 
-use super::{cpu, console::CONSOLE};
+use super::cpu;
 use core::arch::asm;
 
 pub type SyscallrFn = *mut extern "C" fn();
@@ -12,7 +12,7 @@ extern "C"
 
 pub const __NR_READ : usize = 0;
 pub const __NR_WRITE : usize = 1;
-
+pub const __NR_SCHED_YIELD : usize = 24;
 
 #[no_mangle]
 pub static mut SYSTEM_CALL_TABLE : [SyscallrFn; 256] = [null_mut(); 256];
@@ -82,6 +82,7 @@ pub fn syscall_init()
     cpu::wrmsr(0xc0000080, 0x501);
     unsafe {
         SYSTEM_CALL_TABLE[__NR_WRITE] = sys_write as SyscallrFn;
+        SYSTEM_CALL_TABLE[__NR_SCHED_YIELD] = process::sys_yield as SyscallrFn;
     }
 
 }

@@ -50,7 +50,6 @@ fn mount_root()
     assert!(device.dev_type != DeviceType::Null);
     let sb = read_super_block(2);
     unsafe { FS.load_root_super_block(2, sb) };
-    unsafe { test_fs() };
 }
 
 fn read_super_block(dev : DevT) -> *mut c_void

@@ -11,9 +11,9 @@ use core::{ffi::c_void, arch::asm, fmt};
 use bitfield::bitfield;
 use buddy_system_allocator::{LockedFrameAllocator, LockedHeap};
 
-use crate::kernel::cpu::get_cr2_reg;
+use crate::kernel::cpu::{get_cr2_reg, get_cpu_number};
 use crate::kernel::interrupt::set_interrupt_handler;
-use crate::kernel::interrupt;
+use crate::kernel::{interrupt, sched};
 use crate::kernel::sched::get_current_running_process;
 use crate::{printk, logk, bochs_break};
 
@@ -903,6 +903,7 @@ pub fn init_memory(magic : u32, address : *const c_void)
         printk!("kernel size: {}KB\n", get_kernel_size() / 1024);
         MEMORY_POOL.init(&mut MEMORY_DESCRIPTOR);
         set_interrupt_handler(page_fault as interrupt::HandlerFn, interrupt::INTR_PF as u8);
+        sched::RUNNING_PROCESS.resize(get_cpu_number(), null_mut());
     }
 }
 

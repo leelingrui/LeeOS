@@ -1,5 +1,8 @@
+use super::cpu::get_cpu_number;
 use super::io::{self, IdeCtrlT};
+use super::sched;
 use core::arch::asm;
+use core::ptr::null_mut;
 use super::string::memset;
 use core::ffi::c_char;
 use core::mem::size_of;

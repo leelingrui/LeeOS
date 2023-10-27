@@ -1,6 +1,5 @@
 use core::arch::asm;
-
-use crate::logk;
+use crate::{logk, kernel::{sched, process::{self, PtRegs}}};
 
 use super::{io::{self, outb, inb}, interrupt};
 
@@ -19,13 +18,16 @@ const IRQ_CLOCK : u8 = 0;
 static mut BEEPING : bool = false;
 static mut JIFFIES : u64 = 0;
 
-extern "C" fn clock_handler(vector : u64)
+extern "C" fn clock_handler(vector : u64, mut pt_regs : PtRegs)
 {
-    assert!(vector == 0x20);
-    logk!("clock interrupt occured\n");
-    interrupt::send_eoi(vector as u32);
-    unsafe { JIFFIES += 1 };
-    
+    unsafe
+    {
+        assert!(vector == 0x20);
+        logk!("clock interrupt occured\n");
+        interrupt::send_eoi(vector as u32);
+        JIFFIES += 1;
+        process::schedule();
+    }
 }
 
 fn pit_init()

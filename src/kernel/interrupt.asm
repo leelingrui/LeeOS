@@ -48,6 +48,7 @@
 
 .macro INTERRUPT_HANDLER NAME:req, TYPE:req
 interrupt_handler_\NAME\():
+    xchg bx, bx
 .ifeq \TYPE
     push 0x20000906
 .endif
@@ -60,13 +61,11 @@ interrupt_entry:
     mov rdi, [rsp + 16 * 8]
     mov rax, [HANDLER_TABLE@GOTPCREL + rip]
     mov rax, [rax + rdi * 8]
-    xchg bx, bx
     call rax
 interrupt_exit:
     // call task signal
     RECOVER_CONTEXT
     add rsp, 0x10
-    xchg bx, bx
     iretq
 
 _syscall_start:
@@ -86,7 +85,6 @@ _syscall_start:
     pop rbx
     pop rcx
     pop r11
-    xchg bx, bx
     sysretq
 
 INTERRUPT_HANDLER 0x00, 0
