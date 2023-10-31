@@ -1,8 +1,8 @@
-use core::{ffi::{c_char, c_void}, cmp::min};
+use core::{ffi::{c_char, c_void}, cmp::min, ptr::null_mut, alloc::Layout};
 
-use crate::{fs::file::EOF, kernel::buffer::Buffer};
+use crate::{fs::file::{EOF, FS, FSType}, kernel::{buffer::Buffer, string::EOS, sched::get_current_running_process}, mm::memory::PAGE_SIZE};
 
-use super::file::{LogicalPart, Inode};
+use super::{file::{LogicalPart, Inode, DirEntry}, namei::FSPermission};
 
 
 
@@ -24,7 +24,59 @@ const EXT4_INDIRECT1_BLOCK : u64 = 12 + 1024;
 const EXT4_INDIRECT2_BLOCK : u64 = 12 + 1024 * 1024;
 const EXT4_INDIRECT3_BLOCK : u64 = 12 + 1024 * 1024 * 1024;
 
+pub fn ext4_permission_check(inode : *mut Inode, perm : FSPermission) -> bool
+{
+    unsafe
+    {
+        let desc = (*inode).inode_desc_ptr as *const Ext4Inode;
+        let process = get_current_running_process();
+        let mut mode = (*desc).i_mode;
+        if (*process).uid == 0
+        {
+            return true;
+        }
+        if (*process).uid == (*desc).i_uid
+        {
+            mode >>= 6;
+        }
+        else if (*process).gid == (*desc).i_gid {
+            mode >>= 3;
+        }
+        if (mode & perm.bits() & 0b111) == perm.bits()
+        {
+            true
+        }
+        else 
+        {
+            false
+        }
+    }
 
+}
+
+
+pub fn ext4_match_name(name : *const c_char, entry_name : *const c_char, next : &mut *mut c_char) -> bool
+{
+    unsafe
+    {
+        let mut lhs = name;
+        let mut rhs = entry_name;
+        while *lhs == *rhs && *lhs != EOS && *rhs != EOS {
+            lhs = lhs.offset(1);
+            rhs = rhs.offset(1);
+        }
+        if *rhs != EOS
+        {
+            return false;
+        }
+        if *lhs != EOS
+        {
+            return false;
+        }
+        *next = lhs as *mut c_char;
+        true
+    }
+}
 
 
 bitflags::bitflags! {
@@ -39,6 +91,37 @@ bitflags::bitflags! {
         const IFLNK = 0o120000;  // 符号连接
         const IFSOCK = 0o140000; // SOCKET file
 
+    }
+}
+
+pub fn ext4_find_entry(dir : &mut Inode, name : *const c_char, next : &mut *mut c_char, result_entry_ptr : &mut DirEntry)
+{
+    unsafe
+    {
+        assert!(is_dir((*((*dir).inode_desc_ptr as *mut Ext4Inode)).i_mode));
+        let readable_buffer = alloc::alloc::alloc(Layout::from_size_align((*dir).get_size(), 1).unwrap()) as *mut c_void;
+        let logical_part = &*dir.logical_part_ptr;
+        let mut offset = 0;
+        // let entries = (*dir_entry).count;
+        let mut read_size = FS.read_inode(dir, readable_buffer, (*dir).get_size(), 0);
+        let mut direntry_ptr = readable_buffer as *mut Ext4DirEntry2;
+        while (*dir).get_size() > offset + (*direntry_ptr).rec_len as usize {
+            let mut direntry = DirEntry::new(direntry_ptr as *mut c_void, crate::fs::file::FSType::Ext4);
+            if direntry.match_name(name, next) && direntry.get_entry_point_to() != 0
+            {
+                let dir_entry_ptr = alloc::alloc::alloc(Layout::from_size_align(direntry.get_entry_ptr_size(), 1).unwrap()) as *mut c_void;
+                compiler_builtins::mem::memcpy(dir_entry_ptr as *mut u8, direntry.entry_ptr as *const u8, direntry.get_entry_ptr_size());
+                direntry.entry_ptr = dir_entry_ptr;
+                *result_entry_ptr = direntry;
+                break;
+            }
+            if direntry.get_entry_point_to() == 0
+            {
+                direntry.dir_entry_type = FSType::None;
+                *result_entry_ptr = direntry
+            }
+        }
+        alloc::alloc::dealloc(readable_buffer as *mut u8, Layout::from_size_align((*dir).get_size(), 1).unwrap());
     }
 }
 
@@ -197,6 +280,14 @@ pub fn is_reg(f_mode : u16) -> bool
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFREG.bits()
 }
 
+
+#[inline]
+pub fn ext4_inode_format(inode : *mut Inode, buffer : *mut Buffer, logic_block_size : i32, nr : Idx)
+{
+    unsafe {
+        (*inode).inode_desc_ptr = (*buffer).buffer.offset((256 * (nr - 1) % (1024 * logic_block_size as u64)).try_into().unwrap());
+    }
+}
 
 #[repr(C)]
 pub struct PartEntry

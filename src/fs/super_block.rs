@@ -25,7 +25,7 @@ unsafe fn test_fs()
 {
     let root = FS.get_iroot();
     let mut buffer = alloc::alloc::alloc(Layout::from_size_align_unchecked(4096, 1)) as *mut c_void;
-    let _read_size = FS.read_inode(2, root, buffer, 4096, 0);
+    let _read_size = FS.read_inode(root, buffer, 4096, 0);
     if _read_size != 0
     {
 
