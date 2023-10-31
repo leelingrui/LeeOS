@@ -1,9 +1,8 @@
 use core::{arch::asm, ffi::{c_char, c_void}, ptr::null_mut, alloc::{GlobalAlloc, Layout}, cmp, cell::OnceCell};
 
-use alloc::collections::btree_map;
-
-use crate::{printk, kernel::{sched::{set_running_process, get_current_running_process}, idle}, fs::{file::{Inode, FS}, namei}, mm::{mm_type, memory::{USER_STACK_START, PAGE_SIZE}}};
-
+use alloc::collections::{BinaryHeap, btree_map};
+use crate::{printk, kernel::{global, cpu::get_cpu_number, sched::{self, set_running_process, get_current_running_process}, idle, interrupt}, clib::unistd::write, fs::file::{STDOUT, Inode}, mm::{mm_type, memory::{USER_STACK_START, PAGE_SIZE}}};
+pub type Priority = u8;
 use crate::mm::memory;
 pub type PCB = ProcessControlBlock;
 const MAX_PROGRESS_NUM : Pid = 65536;
@@ -12,7 +11,6 @@ static mut TASK_TABLE : [*mut PCB ;MAX_PROGRESS_NUM as usize] = [null_mut(); MAX
 static mut WAIT_MAP : btree_map::BTreeMap<Priority, *mut PCB> = btree_map::BTreeMap::new();
 static mut IDLE : *mut PCB = null_mut();
 static mut PROCESS_ID_SEQ : Pid = 0;
-type Priority = u8;
 #[repr(C, packed)]
 #[derive(Default)]
 #[derive(Clone)]
@@ -68,15 +66,9 @@ extern "C" { fn interrupt_exit(); }
 
 fn init_thread()
 {
-    unsafe
-    {
-        loop {
-            let inode = namei::namei("/hello.txt".as_ptr() as *const c_char);
-            let buff = alloc::alloc::alloc(Layout::from_size_align(PAGE_SIZE, 1).unwrap());
-            FS.read_inode(inode, buff as *mut c_void, 50, 0);
-        }
+    loop {
+        
     }
-
 }
 
 type Pid = i32;
@@ -89,59 +81,59 @@ pub struct ProcessControlBlock
     pub priority : Priority,
     pub jiffies : u32,
     pub name : [c_char; 16],
-    pub uid : i16,
-    pub gid : i16,
+    pub uid : u32,
+    pub gid : u32,
     pub pid : Pid,
     pub ppid : Pid,
     pub pgid : Pid,
     pub pml4 : *mut memory::Pml4,
     pub wait_pid : Pid,
     pub blocked : u32,
-    pub pwd : *mut c_char,
+    pub inode : *mut Inode,
     pub ipwd : *mut Inode,
-    pub iroot : *mut Inode
+    pub start_ptregs : PtRegs
 }
 
-pub fn running_process() -> *mut PCB
+pub fn awake_process(pcb : *mut PCB)
 {
-    let result;
-    unsafe { asm!(
-            "mov rax, rsp",
-            "and rax, 0xfffffffffffff000",
-            out("rax") result
-        ) }
-    result
+    unsafe
+    {
+        let old = WAIT_MAP.insert((*pcb).priority, pcb);
+        if old.is_some()
+        {
+            panic!("process alread awaken\n");
+        }
+    }
 }
 
-pub fn schedule()
+pub unsafe fn schedule()
 {
-    let current = running_process();
-    
+    let current = sched::get_current_running_process();
+    if !current.is_null()
+    {
+        awake_process(current);
+    }
+    let next_process = WAIT_MAP.pop_first();
+    if next_process.is_some()
+    {
+        if current == next_process.unwrap().1
+        {
+            return;
+        }
+        task_switch(next_process.unwrap().1);
+    }
+    else {
+        task_switch(IDLE);
+    }
 }
 
 impl ProcessControlBlock {
-    pub fn get_iroot(&self) -> *mut Inode
-    {
-        unsafe {
-            (*self.iroot).count += 1;
-            self.iroot
-        }
-    }
-
-    pub fn get_ipwd(&self) -> *mut Inode
-    {
-        unsafe {
-            (*self.ipwd).count += 1;
-            self.ipwd
-        }
-    }
-
     pub fn create_task_control_block() -> *mut ProcessControlBlock
     {
         unsafe
         {
             let result = memory::MEMORY_POOL.alloc(Layout::new::<ProcessControlBlock>()) as *mut ProcessControlBlock;
-            (*result) = ProcessControlBlock { kernel_stack:null_mut(), priority: 0, jiffies: 0, name: [0; 16], uid: 0, gid: 0, pid: 0, ppid: 0, pgid: 0, pml4: null_mut(), wait_pid: 0, blocked: 0, mm: mm_type::MMStruct::new(result), pwd: null_mut(), ipwd: null_mut(), iroot: null_mut(), stack: null_mut() };
+            (*result) = ProcessControlBlock { kernel_stack:null_mut(), priority: 0, jiffies: 0, name: [0; 16], uid: 0, gid: 0, pid: 0, ppid: 0, pgid: 0, pml4: null_mut(), wait_pid: 0, blocked: 0, mm: mm_type::MMStruct::new(result), stack: null_mut(), inode: null_mut(), ipwd: null_mut(), start_ptregs: PtRegs::default() };
             result
         }
     }
@@ -183,10 +175,6 @@ impl ProcessControlBlock {
             (*process_frame).rbp = 6;
             (*process_frame).rip = func_addr;
             (*pcb_addr).priority = prio;
-            (*pcb_addr).pwd = alloc::alloc::alloc(Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap()) as *mut c_char;
-            (*pcb_addr).iroot = FS.get_iroot();
-            (*pcb_addr).ipwd = (*pcb_addr).iroot;
-            compiler_builtins::mem::memcpy((*pcb_addr).pwd as *mut u8, "/".as_ptr(), 1);
             let pid = PCB::get_avaliable_pid();
             TASK_TABLE[pid as usize] = pcb_addr;
             (*pcb_addr).pid = pid;
