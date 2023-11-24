@@ -1,24 +1,30 @@
 BUILD:=./build
-SRC:=./src
-RSFILES:=$(SRC)/main.rs $(SRC)/kernel/console.rs $(SRC)/kernel/interrupt.rs $(SRC)/kernel/io.rs $(SRC)/kernel/lang_items.rs \
-	$(SRC)/kernel/mod.rs $(SRC)/kernel/relocation.rs $(SRC)/kernel/semaphore.rs $(SRC)/kernel/string.rs $(SRC)/kernel/interrupt.asm \
-	$(SRC)/kernel/entry.asm $(SRC)/kernel/global.rs $(SRC)/mm/memory.rs $(SRC)/kernel/bitmap.rs $(SRC)/kernel/clock.rs $(SRC)/kernel/math.rs \
-	$(SRC)/kernel/process.rs $(SRC)/mm/slub.rs $(SRC)/kernel/list.rs $(SRC)/mm/page.rs $(SRC)/kernel/fpu.rs  \
-	$(SRC)/kernel/cpu.rs $(SRC)/kernel/bitops.rs $(SRC)/kernel/syscall.rs $(SRC)/clib/mod.rs $(SRC)/clib/unistd.rs \
-	$(SRC)/fs/file.rs $(SRC)/fs/mod.rs $(SRC)/mm/mm_type.rs $(SRC)/kernel/sched.rs $(SRC)/fs/ntfs.rs $(SRC)/kernel/time.rs \
-	$(SRC)/fs/ext4.rs $(SRC)/fs/super_block.rs $(SRC)/kernel/device.rs $(SRC)/kernel/buffer.rs
+KERNEL_SRC:=./kernel/src
+KERNEL_FILES:=$(KERNEL_SRC)/lib.rs $(KERNEL_SRC)/kernel/console.rs $(KERNEL_SRC)/kernel/interrupt.rs $(KERNEL_SRC)/kernel/io.rs $(KERNEL_SRC)/kernel/lang_items.rs \
+	$(KERNEL_SRC)/kernel/mod.rs $(KERNEL_SRC)/kernel/relocation.rs $(KERNEL_SRC)/kernel/semaphore.rs $(KERNEL_SRC)/kernel/string.rs $(KERNEL_SRC)/kernel/interrupt.asm \
+	$(KERNEL_SRC)/kernel/entry.asm $(KERNEL_SRC)/kernel/global.rs $(KERNEL_SRC)/mm/memory.rs $(KERNEL_SRC)/kernel/bitmap.rs $(KERNEL_SRC)/kernel/clock.rs $(KERNEL_SRC)/kernel/math.rs \
+	$(KERNEL_SRC)/kernel/process.rs $(KERNEL_SRC)/mm/slub.rs $(KERNEL_SRC)/kernel/list.rs $(KERNEL_SRC)/mm/page.rs $(KERNEL_SRC)/kernel/fpu.rs  \
+	$(KERNEL_SRC)/kernel/cpu.rs $(KERNEL_SRC)/kernel/bitops.rs $(KERNEL_SRC)/kernel/syscall.rs \
+	$(KERNEL_SRC)/fs/file.rs $(KERNEL_SRC)/fs/mod.rs $(KERNEL_SRC)/mm/mm_type.rs $(KERNEL_SRC)/kernel/sched.rs $(KERNEL_SRC)/fs/ntfs.rs $(KERNEL_SRC)/kernel/time.rs \
+	$(KERNEL_SRC)/fs/ext4.rs $(KERNEL_SRC)/fs/super_block.rs $(KERNEL_SRC)/kernel/device.rs $(KERNEL_SRC)/kernel/buffer.rs
 ENTRYPOINT:=0x0xffff800000100000
 # RFLAGS+= target-feature=-crt-static
 RFLAGS:=$(strip ${RFLAGS})
 DEBUG:=
+BUILTIN_APP=$(BUILD)/x86_64-unknown-none/init
 
-$(BUILD)/boot/%.asm.bin: $(SRC)/boot/%.asm
+LIB_SRC:=./lib/src
+LIB_FILES:=$(LIB_SRC)/lib.rs $(LIB_SRC)/unistd.rs ./lib/Makefile
+
+$(BUILD)/boot/%.asm.bin: $(KERNEL_SRC)/boot/%.asm
 	$(shell mkdir -p $(dir $@))
 	nasm -f bin $(DEBUG) $< -o $@
 
-$(BUILD)/kernel/%.asm.bin: $(SRC)/kernel/%.asm
+$(BUILD)/kernel/%.asm.bin: $(KERNEL_SRC)/kernel/%.asm
 	$(shell mkdir -p $(dir $@))
 	nasm -f bin $(DEBUG) $< -o $@
+
+$(BUILTIN_APP): $(LIB_FILES)
 
 .PHONY: test
 test: $(BUILD)/master.img
@@ -32,9 +38,11 @@ usb: $(BUILD)/boot/boot.asm.bin /dev/sdb
 	sudo dd if=usb.bin of=dev/sdb bs=512 count=1 conv=notrunc
 	rm usb.bin
 
-$(BUILD)/x86_64-unknown-none/debug/lee_os: $(RSFILES) \
-											$(SRC)/linker.ld
-	cargo $(DEBUG) build
+$(BUILD)/x86_64-unknown-none/debug/lee_os: $(KERNEL_FILES) \
+											$(KERNEL_SRC)/linker.ld ./kernel/Makefile
+	$(MAKE) -C ./kernel build_kernel
+
+#
 
 $(BUILD)/system.bin: $(BUILD)/x86_64-unknown-none/debug/lee_os
 	objcopy -O binary $< $@
@@ -43,7 +51,7 @@ $(BUILD)/system.map: $(BUILD)/x86_64-unknown-none/debug/lee_os
 	nm $< | sort > $@
 
 
-include $(SRC)/utils/image.mk
+include ./utils/image.mk
 
 .PHONY: qemug
 qemug:  $(IMAGES)

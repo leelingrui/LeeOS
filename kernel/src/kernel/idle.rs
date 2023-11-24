@@ -1,5 +1,6 @@
 use core::arch::asm;
-use crate::{clib::unistd::write, fs::file::STDOUT, logk};
+
+use crate::logk;
 static mut IDLE_CNT : u64 = 0;
 
 pub fn idle()

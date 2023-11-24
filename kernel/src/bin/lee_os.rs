@@ -10,19 +10,16 @@ use core::arch::global_asm;
 extern crate alloc;
 
 use kernel::{console::console_init, global::gdt_init, interrupt::interrupt_init};
-use crate::fs::super_block::super_init;
-use crate::kernel::clock::clock_init;
-use crate::kernel::global::tss_init;
-use crate::kernel::interrupt;
-use crate::kernel::io::ide_init;
-use crate::kernel::process::process_init;
-use crate::kernel::syscall::syscall_init;
-use crate::kernel::fpu::fpu_init;
-use crate::mm::memory::init_memory;
-mod kernel;
-mod fs;
-mod clib;
-mod mm;
+use lee_os::fs::super_block::super_init;
+use lee_os::kernel::clock::clock_init;
+use lee_os::kernel::global::tss_init;
+use lee_os::kernel::interrupt;
+use lee_os::kernel::io::ide_init;
+use lee_os::kernel::process::process_init;
+use lee_os::kernel::syscall::syscall_init;
+use lee_os::kernel::fpu::fpu_init;
+use lee_os::mm::memory::init_memory;
+
 // use kernel::console::Console;
 global_asm!(include_str!("./kernel/entry.asm"));
 

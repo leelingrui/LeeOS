@@ -89,7 +89,7 @@ pub struct ProcessControlBlock
     pub pml4 : *mut memory::Pml4,
     pub wait_pid : Pid,
     pub blocked : u32,
-    pub inode : *mut Inode,
+    pub iroot : *mut Inode,
     pub ipwd : *mut Inode,
     pub start_ptregs : PtRegs
 }
@@ -128,6 +128,13 @@ pub unsafe fn schedule()
 }
 
 impl ProcessControlBlock {
+    pub fn get_iroot(&mut self) -> *mut Inode
+    {
+        unsafe {
+            (*self.iroot).count += 1;
+            self.iroot   
+        }
+    }
     pub fn create_task_control_block() -> *mut ProcessControlBlock
     {
         unsafe

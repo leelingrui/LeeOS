@@ -1,6 +1,6 @@
 $(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
 	$(BUILD)/boot/loader.asm.bin \
-	$(SRC)/utils/master.sfdisk \
+	./utils/master.sfdisk \
 	$(BUILD)/x86_64-unknown-none/debug/lee_os $(BUILD)/system.map
 # 创建磁盘镜像
 	yes | bximage -q -hd=16 -func=create -sectsize=512 -imgmode=flat $@
@@ -25,7 +25,7 @@ $(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
 	sudo umount /mnt/LeeOSDisk
 	sudo losetup -d /dev/loop0
 
-$(BUILD)/slave.img: $(SRC)/utils/slave.sfdisk
+$(BUILD)/slave.img: ./utils/slave.sfdisk
 
 # 创建一个 32M 的硬盘镜像
 	yes | bximage -q -hd=32 -func=create -sectsize=512 -imgmode=flat $@
