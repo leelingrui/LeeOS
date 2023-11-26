@@ -35,11 +35,11 @@ pub fn ext4_permission_check(inode : *mut Inode, perm : FSPermission) -> bool
         {
             return true;
         }
-        if (*process).uid == (*desc).i_uid
+        if (*process).uid == (*desc).i_uid as u32
         {
             mode >>= 6;
         }
-        else if (*process).gid == (*desc).i_gid {
+        else if (*process).gid == (*desc).i_gid as u32 {
             mode >>= 3;
         }
         if (mode & perm.bits() & 0b111) == perm.bits()

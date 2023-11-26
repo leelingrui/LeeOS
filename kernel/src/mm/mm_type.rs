@@ -6,10 +6,10 @@ use super::{page::Pageflags, memory::MEMORY_POOL};
 
 pub struct MMStruct
 {
-    mmap : *mut VMAreaStruct,
-    mm_rb : BTreeSet<VMAPtrCmp>,
-    mmap_cache : *mut VMAreaStruct,
-    pcb_ptr : *mut process::ProcessControlBlock
+    pub mmap : *mut VMAreaStruct,
+    pub mm_rb : BTreeSet<VMAPtrCmp>,
+    pub mmap_cache : *mut VMAreaStruct,
+    pub pcb_ptr : *mut process::ProcessControlBlock
 }
 
 #[derive(Eq)]
@@ -267,9 +267,19 @@ impl PartialOrd for VMAreaStruct
 }
 
 impl VMAreaStruct {
+    pub fn get_start(&self) -> u64
+    {
+        self.vm_start
+    }
+
+    pub fn get_end(&self) -> u64
+    {
+        self.vm_end
+    }
+
     pub fn new(strat : u64, end : u64, mm_struct : *mut MMStruct, flags : Pageflags) -> VMAreaStruct
     {
-        VMAreaStruct { vm_start: strat, vm_end: end, list: ListHead::empty(), vm_mm: mm_struct, vm_flags: flags, vm_ref_count: AtomicI64::new(1) }
+        VMAreaStruct { vm_start: strat, vm_end: end - 1, list: ListHead::empty(), vm_mm: mm_struct, vm_flags: flags, vm_ref_count: AtomicI64::new(1) }
     }
 
     pub fn get_next(&self) -> *mut VMAreaStruct

@@ -1,14 +1,15 @@
 $(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
 	$(BUILD)/boot/loader.asm.bin \
 	./utils/master.sfdisk \
-	$(BUILD)/x86_64-unknown-none/debug/lee_os $(BUILD)/system.map
+	$(BUILD)/x86_64-unknown-none/debug/lee_os $(BUILD)/system.map \
+	$(BUILTIN_APP)
 # 创建磁盘镜像
 	yes | bximage -q -hd=16 -func=create -sectsize=512 -imgmode=flat $@
 	dd if=$(BUILD)/boot/boot.asm.bin of=$@ bs=512 count=1 conv=notrunc
 	dd if=$(BUILD)/boot/loader.asm.bin of=$@ bs=512 count=4 seek=2 conv=notrunc
 	dd if=$(BUILD)/x86_64-unknown-none/debug/lee_os of=$@ bs=512 seek=10 conv=notrunc
 
-	sfdisk $@ < $(SRC)/utils/master.sfdisk
+	sfdisk $@ < ./utils/master.sfdisk
 	sudo losetup /dev/loop0 --partscan $@
 
 	sudo mkfs.ext4 -c /dev/loop0p1

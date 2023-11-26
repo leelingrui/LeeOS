@@ -2,6 +2,7 @@ use alloc::alloc::Layout;
 use alloc::boxed::Box;
 use bitflags::Flag;
 use core::alloc::GlobalAlloc;
+use core::clone;
 use core::fmt::Display;
 use core::intrinsics::{log2f64, size_of};
 use core::ops::Range;
@@ -19,9 +20,10 @@ use crate::{printk, logk, bochs_break};
 
 
 use crate::kernel::cpu;
+use super::mm_type::VMAreaStruct;
 use super::page::{self, Pageflags, GFP};
 use super::slub;
-use crate::kernel::process::PtRegs;
+use crate::kernel::process::{PtRegs, PCB};
 use crate::kernel::{relocation, bitmap, string::memset, semaphore};
 const ARDS_BUFFER : *const c_void = 0x7c00 as *const c_void;
 static mut KERNEL_PAGE_DIR : *const c_void = 0x0 as *const c_void;
@@ -30,13 +32,59 @@ pub static mut MEMORY_DESCRIPTOR : MemoryDescriptor = MemoryDescriptor{ size : 0
 pub static mut MEMORY_POOL : MemoryPool = MemoryPool::new();
 pub const PAGE_SHIFT : usize = 12;
 pub const PAGE_SIZE : usize = 1 << 12;
+pub const MAX_USER_STACK_SIZE : usize = 8 * 1024 * 1024;
 const MAX_ORDER : usize = 11;
 const KERNEL_START : usize = 0xffff800000100000;
 const VIRTADDR_START : usize = 0xffff800000000000;
 const PHYADDR_START : *mut c_void = 0x100000 as *mut c_void;
 pub const LINEAR_MAP_ARREA_START : *mut c_void = 0xffff880000000000 as *mut c_void;
 pub const LINEAR_MAP_ARREA_END : *mut c_void = 0xffffc80000000000 as *mut c_void;
-pub const USER_STACK_START : *mut c_void = 0x00007ffffffff000 as *mut c_void;
+pub const USER_STACK_TOP : *mut c_void = 0x00007ffffffff000 as *mut c_void;
+pub const USER_STACK_BOTTOM : *mut c_void = (0x00007ffffffff000 - MAX_USER_STACK_SIZE) as *mut c_void;
+
+bitflags::bitflags! {
+    pub struct CloneFlags : u64
+    {
+        const CSIGNAL = 0x000000ff;	/* signal mask to be sent at exit */
+        const CLONE_VM = 0x00000100;	/* set if VM shared between processes */
+        const CLONE_FS = 0x00000200;	/* set if fs info shared between processes */
+        const CLONE_FILES = 0x00000400;	/* set if open files shared between processes */
+        const CLONE_SIGHAND = 0x00000800;	/* set if signal handlers and blocked signals shared */
+        const CLONE_PIDFD =	0x00001000;	/* set if a pidfd should be placed in parent */
+        const CLONE_PTRACE = 0x00002000;	/* set if we want to let tracing continue on the child too */
+        const CLONE_VFORK =	0x00004000;	/* set if the parent wants the child to wake it up on mm_release */
+        const CLONE_PARENT = 0x00008000;	/* set if we want to have the same parent as the cloner */
+        const CLONE_THREAD = 0x00010000;	/* Same thread group? */
+        const CLONE_NEWNS = 0x00020000;	/* New mount namespace group */
+        const CLONE_SYSVSEM = 0x00040000;	/* share system V SEM_UNDO semantics */
+        const CLONE_SETTLS = 0x00080000;	/* create a new TLS for the child */
+        const CLONE_PARENT_SETTID =	0x00100000;	/* set the TID in the parent */
+        const CLONE_CHILD_CLEARTID = 0x00200000;	/* clear the TID in the child */
+        const CLONE_DETACHED = 0x00400000;	/* Unused, ignored */
+        const CLONE_UNTRACED = 0x00800000;	/* set if the tracing process can't force CLONE_PTRACE on this clone */
+        const CLONE_CHILD_SETTID = 0x01000000;	/* set the TID in the child */
+        const CLONE_NEWCGROUP =	0x02000000;	/* New cgroup namespace */
+        const CLONE_NEWUTS = 0x04000000;	/* New utsname namespace */
+        const CLONE_NEWIPC = 0x08000000;	/* New ipc namespace */
+        const CLONE_NEWUSER = 0x10000000;	/* New user namespace */
+        const CLONE_NEWPID = 0x20000000;	/* New pid namespace */
+        const CLONE_NEWNET = 0x40000000;	/* New network namespace */
+        const CLONE_IO = 0x80000000;	/* Clone io context */
+
+        /* Flags for the clone3() syscall. */
+        const CLONE_CLEAR_SIGHAND = 0x100000000; /* Clear any signal handler and reset to SIG_DFL. */
+        const CLONE_INTO_CGROUP = 0x200000000; /* Clone into a specific cgroup given the right permissions. */
+
+        /*
+        * cloning flags intersect with CSIGNAL so can be used with unshare and clone3
+        * syscalls only:
+        */
+        const CLONE_NEWTIME = 0x00000080;	/* New time namespace */
+    }
+}
+
+
+
 pub fn handle_alloc_error(layout : Layout) -> !
 {
     panic!("heap alloction error, layout = {:?}", layout);
@@ -872,9 +920,87 @@ unsafe fn get_kernel_size() -> usize
     relocation::KERNEL_SIZE - KERNEL_START
 }
 
-fn reset_map_type()
+pub fn copy_page_table(src_pcb : *mut PCB, clone_flags : CloneFlags) -> *mut c_void
 {
+    unsafe
+    {
+        let dst = alloc::alloc::alloc(Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap()) as *mut c_void;
+        if clone_flags.contains(CloneFlags::CLONE_VM)
+        {
+            (*MEMORY_POOL.mem_map.offset(phys2page((*src_pcb).pml4 as *mut c_void) as isize))._refcount.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            return (*src_pcb).pml4 as *mut c_void;
+        }
+        let mut vma = (*src_pcb).mm.mmap;
+        while !vma.is_null() {
+            arch_copy_page_table(dst, phys2virt((*src_pcb).pml4 as *mut c_void) as *mut c_void, (*vma).get_start() as *mut c_void, (*vma).get_end() as *mut c_void, &clone_flags);
+            vma = (*vma).get_next();
+        }
+        virt2phys(dst)
+    }
+}
 
+pub fn arch_copy_page_table(dst : *mut c_void, src : *mut c_void, start : *mut c_void, end : *mut c_void, clone_flags : &CloneFlags)
+{
+    x86_64_copy_pml4(dst as *mut Pml4, src as *mut Pml4, start, end, clone_flags);
+}
+
+fn x86_64_copy_pml4(dst : *mut Pml4, src : *mut Pml4, mut start : *mut c_void, end : *mut c_void, clone_flags : &CloneFlags)
+{
+    unsafe
+    {
+        while start < end {
+            let pml4_no = get_pml4_offset(start);
+            let pdpt_ptr;
+            let src_pdpt_ptr = phys2virt((*src).entry[pml4_no].get_page_offset() as *mut c_void) as *mut Pdpt;
+            if (*dst).entry[pml4_no].get_present() != 1
+            {
+                pdpt_ptr = phys2virt((*dst).entry[pml4_no].get_page_offset() as *mut c_void) as *mut Pdpt;
+            }
+            else {
+                pdpt_ptr = alloc::alloc::alloc(Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap() ) as *mut Pdpt;
+                (*dst).entry[pml4_no].set_present(1);
+                (*dst).entry[pml4_no].set_page_offset(virt2phys(pdpt_ptr as *mut c_void) as u64);
+            }
+            let max_pdpt = (start as u64 & 0xffffff8000000000) + (1 << 39);
+            while (start as u64) < max_pdpt {
+                let pdpt_no = get_pdpt_offset(start);
+                let dst_pdt_ptr;
+                let src_pdt_ptr = phys2virt((*src_pdpt_ptr).entry[pdpt_no].get_page_offset() as *mut c_void) as *mut Pdt;
+                if (*dst).entry[pdpt_no].get_present() != 1
+                {
+                    dst_pdt_ptr = phys2virt((*pdpt_ptr).entry[pdpt_no].get_page_offset() as *mut c_void) as *mut Pdt;
+                }
+                else {
+                    dst_pdt_ptr = alloc::alloc::alloc(Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap()) as *mut Pdt;
+                    (*pdpt_ptr).entry[pdpt_no].set_present(1);
+                    (*pdpt_ptr).entry[pdpt_no].set_page_offset(virt2phys(dst_pdt_ptr as *mut c_void) as u64);
+                }
+                let max_pdt = (start as u64 & 0xffffffffc0000000) + (1 << 30);
+                while (start as u64) < max_pdt {
+                    let pdt_no = get_pdt_offset(start);
+                    let dst_pt_ptr;
+                    let src_pt_ptr = phys2virt((*src_pdt_ptr).entry[pdpt_no].get_page_offset() as *mut c_void) as *mut Pt;
+                    if (*dst).entry[pdt_no].get_present() != 1
+                    {
+                        dst_pt_ptr = phys2virt((*pdpt_ptr).entry[pdt_no].get_page_offset() as *mut c_void) as *mut Pt;
+                    }
+                    else {
+                        dst_pt_ptr = alloc::alloc::alloc(Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap()) as *mut Pt;
+                        (*dst_pdt_ptr).entry[pdpt_no].set_present(1);
+                        (*dst_pdt_ptr).entry[pdpt_no].set_page_offset(virt2phys(dst_pdt_ptr as *mut c_void) as u64);
+                    }
+                    let max_pt = (start as u64 & 0xffffffffc0000000) + (1 << 21);
+                    while (start as u64) < max_pt {
+                        let pt_no = get_pt_offset(start);
+                        (*src_pt_ptr).entry[pt_no].set_wr(0);// .set_wr(0);
+                        (*dst_pt_ptr).entry[pt_no].0 = (*src_pdt_ptr).entry[pt_no].0;
+                        start = start.offset(PAGE_SIZE as isize);
+                    }
+                }
+            }
+        }
+
+    }
 }
 
 pub fn init_memory(magic : u32, address : *const c_void)

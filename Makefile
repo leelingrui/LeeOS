@@ -11,10 +11,10 @@ ENTRYPOINT:=0x0xffff800000100000
 # RFLAGS+= target-feature=-crt-static
 RFLAGS:=$(strip ${RFLAGS})
 DEBUG:=
-BUILTIN_APP=$(BUILD)/x86_64-unknown-none/init
+BUILTIN_APP=$(BUILD)/x86_64-unknown-none/debug/init
 
 LIB_SRC:=./lib/src
-LIB_FILES:=$(LIB_SRC)/lib.rs $(LIB_SRC)/unistd.rs ./lib/Makefile
+LIB_FILES:=$(LIB_SRC)/lib.rs $(LIB_SRC)/unistd.rs ./lib/Makefile $(LIB_SRC)/bin/init.rs
 
 $(BUILD)/boot/%.asm.bin: $(KERNEL_SRC)/boot/%.asm
 	$(shell mkdir -p $(dir $@))
@@ -25,6 +25,7 @@ $(BUILD)/kernel/%.asm.bin: $(KERNEL_SRC)/kernel/%.asm
 	nasm -f bin $(DEBUG) $< -o $@
 
 $(BUILTIN_APP): $(LIB_FILES)
+	$(MAKE) -C ./lib build_lib
 
 .PHONY: test
 test: $(BUILD)/master.img
