@@ -1,10 +1,10 @@
-use core::{ffi::{c_char, c_void}, alloc::Layout, ptr::null_mut, mem::size_of};
+use core::{ffi::{c_char, c_void, CStr}, alloc::Layout, ptr::null_mut, mem::size_of, sync::atomic::AtomicI64};
 
-use alloc::{vec::Vec, collections::BTreeMap, alloc::dealloc};
+use alloc::{vec::Vec, collections::BTreeMap};
 
-use crate::{kernel::{console::CONSOLE, device::DevT, process::PCB, bitmap::BitMap, math::{pow, self}, buffer::Buffer}, mm::memory::PAGE_SIZE, fs::ext4::{ext4_get_logic_block_idx, ext4_inode_format}};
+use crate::{kernel::{console::CONSOLE, device::DevT, process::PCB, bitmap::BitMap, math::{pow, self}, buffer::Buffer, semaphore::RWLock, list::ListHead, sched::get_current_running_process}, mm::memory::PAGE_SIZE, fs::ext4::{ext4_get_logic_block_idx, ext4_inode_format}};
 
-use super::ext4::{Idx, Ext4SuperBlock, Ext4GroupDesc, ext4_inode_read, Ext4Inode, ext4_find_entry, ext4_match_name, Ext4DirEntry2, self};
+use super::{ext4::{Idx, Ext4SuperBlock, Ext4GroupDesc, ext4_inode_read, Ext4Inode, ext4_find_entry, ext4_match_name, Ext4DirEntry2, self}, namei::FSPermission};
 pub static mut FS : FileSystem = FileSystem::new();
 
 pub struct FileSystem
@@ -15,25 +15,66 @@ pub struct FileSystem
     root_dev : DevT
 }
 
+bitflags::bitflags!
+{
+    pub struct FileFlag : u64
+    {
+        const O_RDONLY = 00;      // 只读方式
+        const O_WRONLY = 01;      // 只写方式
+        const O_RDWR = 02;        // 读写方式
+        const O_ACCMODE = 03;     // 文件访问模式屏蔽码
+        const O_CREAT = 00100;    // 如果文件不存在就创建
+        const O_EXCL = 00200;     // 独占使用文件标志
+        const O_NOCTTY = 00400;   // 不分配控制终端
+        const O_TRUNC = 01000;    // 若文件已存在且是写操作，则长度截为 0
+        const O_APPEND = 02000;   // 以添加方式打开，文件指针置为文件尾
+        const O_NONBLOCK = 04000; // 非阻塞方式打开和操作文件
+    }
+}
+pub struct FileStruct
+{
+    pub count : AtomicI64,
+    pub flag : FileFlag,
+    pub offset : usize,
+    pub inode : *mut Inode
+}
+
+impl FileStruct {
+    pub fn new() -> Self
+    {
+        Self { count: AtomicI64::new(1), inode: null_mut(), flag: FileFlag::empty(), offset: 0 }
+    }
+
+    pub fn get_inode(&self) -> *mut Inode
+    {
+        self.inode
+    }
+}
+
 impl FileSystem {
-    pub fn release_inode(&mut self, inode : *mut Inode)
+
+    pub fn release_file(&mut self, inode : *mut FileStruct)
     {
         unsafe
         {
-            let logical_part = self.logical_part.get_mut(&(*inode).dev);
+            let logical_part = self.logical_part.get_mut(&(*(*inode).inode).dev);
             match logical_part {
                 Some(x) => 
                 {
-                    x.release_inode(inode);
+                    x.release_file((*(*inode).inode).dev as u64);
                 },
-                None => panic!("no device {}", (*inode).dev),
+                None => panic!("no device {}", (*(*inode).inode).dev),
             }
         }
     }
 
     pub fn get_iroot(&self) -> *mut Inode
     {
-        self.iroot
+        unsafe {
+            (*self.iroot).count += 1;
+            self.iroot
+        }
+
     }
 
     const fn new() -> Self
@@ -94,12 +135,12 @@ impl FileSystem {
 
     }
 
-    pub fn get_inode(&mut self, dev : DevT, inode_idx : Idx) -> *mut Inode
+    pub fn get_file(&mut self, dev : DevT, inode_idx : Idx, file_flag : FileFlag) -> *mut FileStruct
     {
         let sb = self.logical_part.get_mut(&dev);
         if sb.is_some()
         {
-            sb.unwrap().get_inode(inode_idx)
+            sb.unwrap().open_file(inode_idx, file_flag)
         }
         else 
         {
@@ -172,7 +213,7 @@ pub struct LogicalPart
     pub logic_block_size : i32,
     pub logic_block_count : usize,
     pub inode_count : usize,
-    pub inode_map : BTreeMap<Idx, *mut Inode>,
+    pub file_map : BTreeMap<Idx, *mut FileStruct>,
     pub data_map : BTreeMap<Idx, *mut Buffer>,
     pub inode_per_group : usize,
     pub blocks_per_group : usize
@@ -302,6 +343,25 @@ impl DirEntry {
 }
 
 impl LogicalPart {
+    pub fn release_file(&mut self, nr : Idx)
+    {
+        unsafe
+        {
+            let entry = self.file_map.remove_entry(&nr);
+            match entry {
+                Some(ptr) => 
+                {
+                    let previous = (*ptr.1).count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                    if previous == 1
+                    {
+                        self.release_inode((*ptr.1).inode);
+                    }
+                },
+                None => { },
+            }
+        }
+    }
+
     pub fn release_buffer(&mut self, buffer : *mut Buffer)
     {
         unsafe
@@ -324,6 +384,32 @@ impl LogicalPart {
             
         }
 
+    }
+
+    pub fn open_file(&mut self, nr : Idx, flag : FileFlag) -> *mut FileStruct
+    {
+        unsafe
+        {
+            let file = self.file_map.get_mut(&nr);
+            match file {
+                Some(ptr) => {
+                    (*(*ptr)).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    *ptr
+                },
+                None => {
+                    let inode = self.get_inode(nr);
+                    let f_struct = alloc::alloc::alloc(Layout::new::<FileStruct>()) as *mut FileStruct;
+                    if !f_struct.is_null()
+                    {
+                        (*f_struct).inode = inode;
+                        (*f_struct).flag = flag;
+                        self.file_map.insert(nr, f_struct);
+                    }
+                    self.buffer_opened_file(f_struct);
+                    f_struct
+                },
+            }
+        }
     }
 
     pub fn get_buffer(&mut self, idx : Idx) -> *mut Buffer 
@@ -364,20 +450,12 @@ impl LogicalPart {
 
     fn new() -> Self
     {
-        Self { fs_type: FSType::None, super_block: null_mut(), group_desc: Vec::new(), logic_block_size: 0, logic_block_count: 0, inode_count: 0, dev: 0, inode_map: BTreeMap::new(), inode_per_group: 0, data_map: BTreeMap::new(), blocks_per_group: 0 }
+        Self { fs_type: FSType::None, super_block: null_mut(), group_desc: Vec::new(), logic_block_size: 0, logic_block_count: 0, inode_count: 0, dev: 0, file_map: BTreeMap::new(), inode_per_group: 0, data_map: BTreeMap::new(), blocks_per_group: 0 }
     }
 
     fn read_block(&self, logic_block_no : usize) -> *mut Buffer
     {
         disk_read(self.dev,  self.logic_block_size as u64 * 2 * logic_block_no as u64, (self.logic_block_size * 2).try_into().unwrap())
-    }
-
-    fn get_buffered_inode(&self, idx : Idx) -> *mut Inode
-    {
-        match self.inode_map.get(&idx) {
-            Some(x) => return *x,
-            None => return null_mut(),
-        }
     }
 
     pub fn release_inode(&mut self, inode : *mut Inode)
@@ -387,16 +465,16 @@ impl LogicalPart {
             (*inode).count -= 1;
             if (*inode).count == 0
             {
-                // todo!()
+                alloc::alloc::dealloc(inode as *mut u8, Layout::new::<Inode>());
             }
         }
     }
 
-    fn add_to_buffered_inode(&mut self, inode : *mut Inode)
+    fn buffer_opened_file(&mut self, f_struct : *mut FileStruct)
     {
         unsafe
         {
-            self.inode_map.insert((*inode).nr, inode);
+            self.file_map.insert((*(*f_struct).inode).nr, f_struct);
         }
     }
 
@@ -405,18 +483,18 @@ impl LogicalPart {
         unsafe { alloc::alloc::alloc(Layout::new::<Inode>()) as *mut Inode }
     }
 
-    #[inline]
+    #[inline(always)]
     fn get_group_desc_no(&self, nr : Idx) -> Idx
     {
         (nr - 1) as Idx / self.inode_per_group as Idx
     }
 
-    #[inline]
+    #[inline(always)]
     fn inode_per_blocks(&self) -> Idx
     {
         1024 * self.inode_per_group as Idx / 256
     }
-    #[inline]
+    #[inline(always)]
     fn get_inode_logical_block(&self, mut nr : Idx) -> Idx
     {
         nr = nr / self.inode_per_blocks() + 1;
@@ -432,17 +510,11 @@ impl LogicalPart {
         unsafe
         {
             assert!(inode_idx <= self.inode_count as Idx);
-            let mut inode = self.get_buffered_inode(inode_idx);
-            if !inode.is_null()
-            {
-                (*inode).count += 1;
-                return inode;
-            }
+            let mut inode = alloc::alloc::alloc(Layout::new::<Inode>()) as *mut Inode;
             inode = self.get_free_inode();
             (*inode).dev = self.dev;
             (*inode).nr = inode_idx;
-            (*inode).count = 1;
-            self.inode_map.insert(inode_idx, inode);
+            (*inode).count += 1;
             let block_no = self.get_inode_logical_block(inode_idx);
             let buffer = self.read_block(block_no as usize);
             (*inode).inode_block_buffer = buffer;
@@ -455,13 +527,17 @@ impl LogicalPart {
                 }
                 _ => panic!("unsupport fs\n")
             }
-            self.add_to_buffered_inode(inode);
+            // self.buffer_opened_file(inode);
             inode
         }
     }
 }
 
-
+pub fn sys_open(file_name : *const c_char, flags : FileFlag, mode : FSPermission)
+{
+    let pcb = get_current_running_process();
+    
+}
 
 
 #[inline]

@@ -14,7 +14,7 @@ pub fn sys_execve(filename : *const c_char, argv : *mut *mut c_char, envp : *mut
 
 unsafe fn do_execve(name : *const c_char, argv : *mut *mut c_char, envp : *mut *mut c_char) -> u64
 {
-    let dst = alloc::alloc::alloc(Layout::for_value(&1024));
+    // let dst = alloc::alloc::alloc(Layout::for_value(&1024));
     // (*regs).rip = dst as u64;
     // (*regs).rsp = 0xa00000;
     // (*regs).rax = 0x1;

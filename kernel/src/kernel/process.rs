@@ -1,7 +1,7 @@
 use core::{arch::asm, ffi::{c_char, c_void}, ptr::{null_mut, null}, alloc::{GlobalAlloc, Layout}, cmp, cell::OnceCell};
 
-use alloc::{collections::{BinaryHeap, btree_map}};
-use crate::{printk, kernel::{global, cpu::get_cpu_number, sched::{self, set_running_process, get_current_running_process}, idle, interrupt}, fs::file::{STDOUT, Inode}, mm::{mm_type, memory::{USER_STACK_TOP, PAGE_SIZE}}};
+use alloc::{collections::{BinaryHeap, btree_map}, vec::Vec};
+use crate::{printk, kernel::{global, cpu::get_cpu_number, sched::{self, set_running_process, get_current_running_process}, idle, interrupt}, fs::{file::{STDOUT, Inode, FileStruct}, namei::Fd}, mm::{mm_type, memory::{USER_STACK_TOP, PAGE_SIZE}}};
 pub type Priority = u8;
 use crate::mm::memory;
 
@@ -92,6 +92,7 @@ pub struct ProcessControlBlock
     pub priority : Priority,
     pub jiffies : u32,
     pub name : [c_char; 16],
+    pub files : Vec<*mut FileStruct>,
     pub uid : u32,
     pub gid : u32,
     pub pid : Pid,
@@ -100,8 +101,8 @@ pub struct ProcessControlBlock
     pub pml4 : *mut memory::Pml4,
     pub wait_pid : Pid,
     pub blocked : u32,
-    pub iroot : *mut Inode,
-    pub ipwd : *mut Inode,
+    pub iroot : *mut FileStruct,
+    pub ipwd : *mut FileStruct,
     pub start_ptregs : PtRegs
 }
 
@@ -173,18 +174,33 @@ fn task_to_user_mode()
 }
 
 impl ProcessControlBlock {
-    pub fn get_iroot(&mut self) -> *mut Inode
+    pub fn insert_to_fd(&mut self, file_t : *mut FileStruct) -> Fd
+    {
+        let mut var = 0;
+        while var < self.files.len() {
+            if self.files[var] == null_mut()
+            {
+                self.files[var] = file_t;
+                return var;
+            }
+            var += 1;
+        }
+        self.files.push(file_t);
+        return var;
+    }
+
+    pub fn get_iroot(&mut self) -> *mut FileStruct
     {
         unsafe {
-            (*self.iroot).count += 1;
+            (*self.iroot).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             self.iroot   
         }
     }
 
-    pub fn get_ipwd(&mut self) -> *mut Inode
+    pub fn get_ipwd(&mut self) -> *mut FileStruct
     {
         unsafe {
-            (*self.ipwd).count += 1;
+            (*self.ipwd).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             self.ipwd
         }
     }
@@ -216,7 +232,7 @@ impl ProcessControlBlock {
         unsafe
         {
             let result = memory::MEMORY_POOL.alloc(Layout::new::<TaskUnion>()) as *mut ProcessControlBlock;
-            (*result) = ProcessControlBlock { kernel_stack:null_mut(), priority: 0, jiffies: 0, name: [0; 16], uid: 0, gid: 0, pid: 0, ppid: 0, pgid: 0, pml4: null_mut(), wait_pid: 0, blocked: 0, mm: mm_type::MMStruct::new(result), stack: null_mut(), iroot: null_mut(), ipwd: null_mut(), start_ptregs: PtRegs::default() };
+            (*result) = ProcessControlBlock { kernel_stack:null_mut(), priority: 0, jiffies: 0, name: [0; 16], uid: 0, gid: 0, pid: 0, ppid: 0, pgid: 0, pml4: null_mut(), wait_pid: 0, blocked: 0, mm: mm_type::MMStruct::new(result), stack: null_mut(), iroot: null_mut(), ipwd: null_mut(), start_ptregs: PtRegs::default(), files: Vec::new() };
             result
         }
     }

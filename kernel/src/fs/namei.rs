@@ -1,8 +1,8 @@
-use core::{ffi::{c_char, c_void}, ptr::null_mut};
+use core::{ffi::{c_char, c_void}, ptr::null_mut, iter::empty};
 use bitflags::bitflags;
 use crate::kernel::{sched::get_current_running_process, string::{is_separator, strrsep}};
-
-use super::{file::{Inode, FS, DirEntry, FSType}, ext4::ext4_permission_check};
+use super::{file::{Inode, FS, DirEntry, FSType, FileStruct, FileFlag}, ext4::ext4_permission_check};
+pub type Fd = usize;
 
 
 bitflags!
@@ -40,62 +40,62 @@ pub fn permission(inode : *mut Inode, perm : FSPermission) -> bool
 
 }
 
-pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut Inode
+pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut FileStruct
 {
     unsafe
     {
-        let mut inode;
+        let mut file_t;
         let pcb = get_current_running_process();
         let mut left = path_name as *mut c_char;
         if is_separator(*left)
         {
-            inode = (*pcb).get_iroot();
+            file_t = (*pcb).get_iroot();
             left = left.offset(1);
         }
         else if *left != 0 {
-            inode = (*pcb).get_ipwd();
+            file_t = (*pcb).get_ipwd();
         }
         else {
             return null_mut()
         }
-        (*inode).count += 1;
+        (*file_t).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         *next = left;
         if *left == 0
         {
-            return inode;
+            return file_t;
         }
         let right = strrsep(left);
         if !right.is_null() || right < left
         {
-            return inode;
+            return file_t;
         }
         *next = left;
         let mut result_entry = DirEntry::empty();
         loop
         {
-            (*inode).find_entry(left, &mut *next, &mut result_entry);
+            (*(*file_t).inode).find_entry(left, &mut *next, &mut result_entry);
             if result_entry.dir_entry_type == FSType::None
             {
                 return null_mut();
             }
-            let tmp_inode = FS.get_inode((*inode).dev, result_entry.get_entry_point_to());
-            FS.release_inode(inode);
-            inode = tmp_inode;
-            if (*inode).is_dir() || !permission(inode, FSPermission::EXEC)
+            let tmp_inode = FS.get_file((*(*file_t).inode).dev, result_entry.get_entry_point_to(), FileFlag::empty());
+            FS.release_file(file_t);
+            file_t = tmp_inode;
+            if (*(*file_t).inode).is_dir() || !permission((*file_t).inode, FSPermission::EXEC)
             {
-                FS.release_inode(inode);
+                FS.release_file(file_t);
                 return null_mut();
             }
             if right == *next
             {
-                return inode;
+                return file_t;
             }
             left = *next;
         }
     }
 }
 
-pub fn namei(path : *const c_char) -> *mut Inode
+pub fn namei(path : *const c_char) -> *mut FileStruct
 {
     unsafe
     {
@@ -111,12 +111,12 @@ pub fn namei(path : *const c_char) -> *mut Inode
         }
         let name = next;
         let mut entry = DirEntry::empty();
-        (*dir).find_entry(name, &mut next, &mut entry);
+        (*(*dir).inode).find_entry(name, &mut next, &mut entry);
         if entry.dir_entry_type == FSType::None
         {
             return null_mut();
         }
-        let inode = FS.get_inode((*dir).dev, entry.get_entry_point_to());
+        let inode = FS.get_file((*(*dir).inode).dev, entry.get_entry_point_to(), FileFlag::empty());
         entry.dispose();
         inode
     }
