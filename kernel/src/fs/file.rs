@@ -53,17 +53,25 @@ impl FileStruct {
 
 impl FileSystem {
 
-    pub fn release_file(&mut self, inode : *mut FileStruct)
+    pub fn release_file(&mut self, file_t : *mut FileStruct)
     {
         unsafe
         {
-            let logical_part = self.logical_part.get_mut(&(*(*inode).inode).dev);
+            if file_t.is_null()
+            {
+                return;
+            }
+            if (*file_t).count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed) > 1
+            {
+                return;
+            }
+            let logical_part = self.logical_part.get_mut(&(*(*file_t).inode).dev);
             match logical_part {
                 Some(x) => 
                 {
-                    x.release_file((*(*inode).inode).dev as u64);
+                    x.release_file((*(*file_t).inode).dev as u64);
                 },
-                None => panic!("no device {}", (*(*inode).inode).dev),
+                None => panic!("no device {}", (*(*file_t).inode).dev),
             }
         }
     }

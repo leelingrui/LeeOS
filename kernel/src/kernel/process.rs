@@ -174,6 +174,15 @@ fn task_to_user_mode()
 }
 
 impl ProcessControlBlock {
+    pub fn get_file(&self, fd : Fd) -> *mut FileStruct
+    {
+        let file_t = self.files.get(fd);
+        match file_t {
+            Some(x) => *x,
+            None => null_mut(),
+        }
+    }
+
     pub fn insert_to_fd(&mut self, file_t : *mut FileStruct) -> Fd
     {
         let mut var = 0;

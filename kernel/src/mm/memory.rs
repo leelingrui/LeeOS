@@ -41,6 +41,7 @@ pub const LINEAR_MAP_ARREA_START : *mut c_void = 0xffff880000000000 as *mut c_vo
 pub const LINEAR_MAP_ARREA_END : *mut c_void = 0xffffc80000000000 as *mut c_void;
 pub const USER_STACK_TOP : *mut c_void = 0x00007ffffffff000 as *mut c_void;
 pub const USER_STACK_BOTTOM : *mut c_void = (0x00007ffffffff000 - MAX_USER_STACK_SIZE) as *mut c_void;
+pub const MMAP_START : *mut c_void = 0x30000000000000 as *mut c_void;
 
 bitflags::bitflags! {
     pub struct CloneFlags : u64
