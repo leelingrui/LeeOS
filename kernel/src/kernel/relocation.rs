@@ -1,4 +1,5 @@
 use super::cpu::get_cpu_number;
+use super::elf64::{Elf64Shdr, Elf64Phdr, Elf64Ehdr};
 use super::io::{self, IdeCtrlT};
 use super::sched;
 use core::arch::asm;
@@ -7,66 +8,8 @@ use super::string::memset;
 use core::ffi::c_char;
 use core::mem::size_of;
 const SHF_ALLOC : u64 = 0b10;
-const EI_NIDENT : usize = 0x10;
 
 pub static mut KERNEL_SIZE : usize = 0;
-
-#[repr(packed)]
-#[repr(C)]
-pub struct Elf64Ehdr
-{
-    e_ident : [c_char ; EI_NIDENT],
-    e_type : u16,
-    e_machine : u16,
-    e_version : u32,
-    e_entry : u64,
-    e_phoff : u64,
-    e_shoff : u64,
-    e_flags : u32,
-    e_ehsize : u16,
-    e_phentsize : u16,
-    e_phnum : u16,
-    e_shentsize : u16,
-    e_shnum : u16,
-    e_shstrndx : u16
-}
-
-#[repr(align(1))]
-#[repr(C)]
-struct Elf64Phdr
-{
-    p_type : u32,			/* Segment type */
-    p_flags : u32,		/* Segment flags */
-    p_offset : u64,		/* Segment file offset */
-    p_vaddr : u64,		/* Segment virtual address */
-    p_paddr : u64,		/* Segment physical address */
-    p_filesz : u64,		/* Segment size in file */
-    p_memsz : u64,		/* Segment size in memory */
-    p_align : u64		/* Segment alignment */
-}
-#[repr(align(1))]
-#[repr(C)]
-struct Elf64Shdr
-{
-    sh_name : u32,		/* Section name (string tbl index) */
-    sh_type : u32,		/* Section type */
-    sh_flags : u64,		/* Section flags */
-    sh_addr : u64,		/* Section virtual addr at execution */
-    sh_offset : u64,		/* Section file offset */
-    sh_size : u64,		/* Section size in bytes */
-    sh_link : u32,		/* Link to another section */
-    sh_info : u32,		/* Additional section information */
-    sh_addralign : u64,		/* Section alignment */
-    sh_entsize : u64		/* Entry size if section holds table */
-}
-#[repr(C)]
-#[repr(align(1))]
-struct Elf64Rela
-{
-    r_offset : u64,               /* Address */
-    r_info : u64,                 /* Relocation type and symbol index */
-    r_addend : u64               /* Addend */
-}
 
 
 
@@ -148,6 +91,15 @@ enum SegmentType
     PtPhdr = 6,    // 程序头表
     PtLoproc = 0x70000000,
     PtHiproc = 0x7fffffff,
+}
+
+#[repr(C)]
+#[repr(align(1))]
+struct Elf64Rela
+{
+    r_offset : u64,               /* Address */
+    r_info : u64,                 /* Relocation type and symbol index */
+    r_addend : u64               /* Addend */
 }
 
 unsafe fn load_system_section(elf64_phdr : *mut Elf64Phdr)

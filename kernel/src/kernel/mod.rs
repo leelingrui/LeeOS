@@ -21,5 +21,6 @@ pub mod time;
 pub mod device;
 pub mod buffer;
 pub mod execve;
+pub mod elf64;
 
 pub type Off = usize;

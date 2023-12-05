@@ -2,7 +2,7 @@ use core::{ffi::{c_char, c_void, CStr}, alloc::Layout, ptr::null_mut, mem::size_
 
 use alloc::{vec::Vec, collections::BTreeMap};
 
-use crate::{kernel::{console::CONSOLE, device::DevT, process::PCB, bitmap::BitMap, math::{pow, self}, buffer::Buffer, semaphore::RWLock, list::ListHead, sched::get_current_running_process}, mm::memory::PAGE_SIZE, fs::ext4::{ext4_get_logic_block_idx, ext4_inode_format}};
+use crate::{kernel::{console::CONSOLE, device::DevT, process::PCB, bitmap::BitMap, math::{pow, self}, buffer::Buffer, semaphore::RWLock, list::ListHead, sched::get_current_running_process, Off}, mm::memory::PAGE_SIZE, fs::ext4::{ext4_get_logic_block_idx, ext4_inode_format}};
 
 use super::{ext4::{Idx, Ext4SuperBlock, Ext4GroupDesc, ext4_inode_read, Ext4Inode, ext4_find_entry, ext4_match_name, Ext4DirEntry2, self}, namei::FSPermission};
 pub static mut FS : FileSystem = FileSystem::new();
@@ -53,6 +53,16 @@ impl FileStruct {
 
 impl FileSystem {
 
+    pub fn read_file(&mut self, file_t : *mut FileStruct, buffer : *mut c_void, len : usize, offset : Off) -> i64
+    {
+        unsafe
+        {
+            // todo!() check file readable
+            self.read_inode((*file_t).inode, buffer, len, offset)
+            
+        }
+    }
+
     pub fn release_file(&mut self, file_t : *mut FileStruct)
     {
         unsafe
@@ -90,7 +100,7 @@ impl FileSystem {
         Self { logical_part: BTreeMap::new(), iroot: null_mut(), root_dev: 0, imount: null_mut() }
     }
 
-    pub fn read_inode(&mut self, inode : *mut Inode, buffer : *mut c_void, len : usize, offset : usize) -> i64
+    pub fn read_inode(&mut self, inode : *mut Inode, buffer : *mut c_void, len : usize, offset : Off) -> i64
     {
         unsafe
         {

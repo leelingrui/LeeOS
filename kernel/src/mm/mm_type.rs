@@ -22,7 +22,19 @@ bitflags::bitflags! {
         const PROT_WRITE = 0x00000002;
         const PROT_EXEC = 0x00000004;
         const PROT_SHARED = 0x00000008;
-        
+        const PROT_KERNEL = 0x40;
+
+        const MAP_SHARED = 0x01;
+        const MAP_PRIVATE = 0x02;
+        const MAP_LOCKED = 0x2000;		/* pages are locked */
+        const MAP_EXECUTABLE = 0x1000;
+        const MAP_ANONYMOUS	= 0x20;
+        const MAP_POPULATE = 0x008000;	/* populate (prefault) pagetables */
+        const MAP_NONBLOCK = 0x010000;	/* do not block on IO */
+        const MAP_STACK	= 0x020000;	/* give out an address that is best suited for process/thread stacks */
+        const MAP_HUGETLB = 0x040000;	/* create a huge page mapping */
+        const MAP_SYNC = 0x080000; /* perform synchronous page faults for the mapping */
+        const MAP_FIXED_NOREPLACE = 0x100000;	/* MAP_FIXED which doesn't unmap underlying mapping */
         /* mprotect() hardcodes VM_MAYREAD >> 4 == VM_READ, and so for r/w/x bits. */
         const VM_MAYREAD = 0x00000010;	/* limits for mprotect() etc */
         const VM_MAYWRITE = 0x00000020;
@@ -152,7 +164,7 @@ pub struct VMAreaStruct
     vm_ref_count : AtomicI64,
     file : *mut FileStruct,
     offset : Off,
-    vm_page_prot : MmapType
+    vm_page_prot : u64
 }
 
 impl MMStruct {
@@ -382,14 +394,33 @@ impl VMAreaStruct {
         self.vm_flags = flags;
     }
 
-    pub fn get_prot(&self) -> MmapType
+    pub fn get_prot(&self) -> u64
     {
         self.vm_page_prot
     }
 
     pub fn set_prot(&mut self, prot : MmapType)
     {
-        self.vm_page_prot = prot;
+        self.vm_page_prot = Self::get_vm_page_prot(prot);
+    }
+
+    fn get_vm_page_prot(prot : MmapType) -> u64
+    {
+        Self::arch_get_vm_page_prot(prot)
+    }
+
+    fn arch_get_vm_page_prot(prot : MmapType) -> u64
+    {
+        let mut result = 0x1;
+        if prot.contains(MmapType::PROT_WRITE)
+        {
+            result |= 0x2;
+        }
+        if prot.contains(MmapType::MAP_KERNEL)
+        {
+            result |= 0x4;
+        }
+        result
     }
 
     pub fn set_file(&mut self, file_t : *mut FileStruct)
@@ -418,7 +449,7 @@ impl VMAreaStruct {
 
     pub fn new(strat : u64, end : u64, mm_struct : *mut MMStruct, flags : MmapType) -> VMAreaStruct
     {
-        VMAreaStruct { vm_start: strat, vm_end: end - 1, list: ListHead::empty(), vm_mm: mm_struct, vm_flags: flags, vm_ref_count: AtomicI64::new(1), file: null_mut(), offset: 0, vm_page_prot: MmapType::empty() }
+        VMAreaStruct { vm_start: strat, vm_end: end - 1, list: ListHead::empty(), vm_mm: mm_struct, vm_flags: flags, vm_ref_count: AtomicI64::new(1), file: null_mut(), offset: 0, vm_page_prot: 0 }
     }
 
     pub fn get_next(&self) -> *mut VMAreaStruct

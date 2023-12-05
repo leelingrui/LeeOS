@@ -34,7 +34,7 @@ pub fn __do_mmap(addr : *const c_void, length : usize, prot : MmapType, flags : 
         if !vma.is_null()
         {
             (*vma).set_file(file_t);
-            (*vma).set_prot(MmapType::from_bits_retain(prot.bits() & 0xf));
+            (*vma).set_prot(prot);
             (*vma).set_flags(flags);
             (*vma).set_offset(offset);
             return vma;
