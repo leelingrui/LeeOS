@@ -13,7 +13,7 @@ static mut TASK_TABLE : [*mut PCB ;MAX_PROGRESS_NUM as usize] = [null_mut(); MAX
 static mut WAIT_MAP : btree_map::BTreeMap<Priority, *mut PCB> = btree_map::BTreeMap::new();
 static mut IDLE : *mut PCB = null_mut();
 static mut PROCESS_ID_SEQ : Pid = 0;
-
+pub const PROCESS_NAME_LEN : usize = 16;
 const THREAD_SIZE : usize = 8 * 1024 * 1024;
 
 #[repr(C, packed)]
@@ -67,7 +67,7 @@ pub fn sys_yield()
     unsafe { schedule() };
 }
 
-extern "C" { fn interrupt_exit(); }
+extern "C" { pub fn interrupt_exit(); }
 
 fn init_thread()
 {
@@ -91,7 +91,7 @@ pub struct ProcessControlBlock
     pub mm : mm_type::MMStruct,
     pub priority : Priority,
     pub jiffies : u32,
-    pub name : [c_char; 16],
+    pub name : [c_char; PROCESS_NAME_LEN],
     pub files : Vec<*mut FileStruct>,
     pub uid : u32,
     pub gid : u32,
