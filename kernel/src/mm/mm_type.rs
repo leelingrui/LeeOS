@@ -156,6 +156,22 @@ pub struct VMAreaStruct
 }
 
 impl MMStruct {
+    pub fn release_all(&self)
+    {
+        unsafe
+        {
+            self.mmap_cache = null_mut();
+            self.mm_rb.clear();
+            let mut vma_ptr = self.mmap;
+            while !vma_ptr.is_null() {
+
+                let prev_vma = vma_ptr;
+                vma_ptr = (*vma_ptr).get_next();
+                Self::free_vma(prev_vma);
+            }
+        }
+    }
+
     pub fn scan_empty_space(&mut self, mut start : *const c_void, length : usize, mut max : *const c_void) -> *mut VMAreaStruct
     {
         assert!((start as u64 & 0xfff) == 0);
