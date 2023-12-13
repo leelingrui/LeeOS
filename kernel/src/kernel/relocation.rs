@@ -1,6 +1,6 @@
 use super::cpu::get_cpu_number;
 use super::elf64::{Elf64Shdr, Elf64Phdr, Elf64Ehdr};
-use super::io::{self, IdeCtrlT};
+use super::io::{self, IdeCtrlT, IDE_IOBASE_PRIMARY, IDE_LBA_MASTER, IDE_FEATURE, IDE_SECTOR, IDE_LBA_LOW, IDE_LBA_MID, IDE_LBA_HIGH, IDE_HDDEVSEL, outb, IDE_SR_BSY, IDE_SR_ERR, IDE_ALT_STATUS, IDE_DATA, inw, SECTOR_SIZE, inb, IDE_SR_DRDY, IDE_CMD_READ, IDE_COMMAND, IDE_SR_DRQ};
 use super::sched;
 use core::arch::asm;
 use core::ptr::null_mut;
@@ -102,7 +102,76 @@ struct Elf64Rela
     r_addend : u64               /* Addend */
 }
 
-unsafe fn load_system_section(elf64_phdr : *mut Elf64Phdr)
+fn ide_early_select_sector(iobase : u16, selector : u8, lba : u64, cnt : u8)
+{
+    unsafe
+    {
+        outb(iobase + IDE_FEATURE, 0);
+        outb(iobase + IDE_SECTOR, cnt);
+        outb(iobase + IDE_LBA_LOW, (lba & 0xff) as u8);
+        outb(iobase + IDE_LBA_MID, (lba >> 8 & 0xff) as u8);
+        outb(iobase + IDE_LBA_HIGH, (lba >> 16 & 0xff) as u8);
+        outb(iobase + IDE_HDDEVSEL, (lba >> 24 & 0xf) as u8 | selector);
+    }
+}
+
+fn ide_early_pio_read_sector(iobase : u16, mut offset : *mut u16)
+{
+    let mut cnt = 0;
+    unsafe
+    {
+        while cnt < SECTOR_SIZE / 2
+        {
+            *offset = inw(iobase + IDE_DATA);
+            offset = offset.offset(1);
+            cnt += 1;
+        }
+    }
+}
+
+#[inline(always)]
+fn ide_early_busy_wait(io_base : u16 ,mask : u8)
+{
+    loop {
+        let state = inb(io_base + IDE_ALT_STATUS);
+        if state & IDE_SR_ERR != 0
+        {
+            panic!()
+        }
+        if state & IDE_SR_BSY != 0
+        {
+            continue;
+        }
+        if (state & mask) == mask
+        {
+            break;
+        }
+    }
+
+}
+
+fn ide_early_pio_sync_read(start_block : u32, num_blocks : u8, dst : *mut u8)
+{
+    let mut var = 0u64;
+    if num_blocks <= 0
+    {
+        panic!("read blocks can't lower than 1");
+    }
+    else
+    {
+        io::outb(IDE_IOBASE_PRIMARY + IDE_HDDEVSEL, IDE_LBA_MASTER);
+        ide_early_busy_wait(IDE_IOBASE_PRIMARY, IDE_SR_DRDY);
+        ide_early_select_sector(IDE_IOBASE_PRIMARY, IDE_LBA_MASTER, start_block as u64, num_blocks);
+        outb(IDE_IOBASE_PRIMARY + IDE_COMMAND, IDE_CMD_READ);
+        while var < num_blocks as u64 {
+            ide_early_busy_wait(IDE_IOBASE_PRIMARY, IDE_SR_DRQ);
+            ide_early_pio_read_sector(IDE_IOBASE_PRIMARY, (dst as u64 + SECTOR_SIZE * var) as *mut u16);
+            var += 1;
+        }
+    }
+}
+
+unsafe fn load_system_section(elf64_phdr : *mut Elf64Phdr, kernel_size : &mut usize)
 {
     let blocks;
     let mut block_num = 0u64;
@@ -118,22 +187,29 @@ unsafe fn load_system_section(elf64_phdr : *mut Elf64Phdr)
         {
             while blocks > 255
             {
-                io::ide_early_pio_sync_read((((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, 0, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num) as *mut u8);
+                ide_early_pio_sync_read((((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, 0, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num) as *mut u8);
                 block_num += 1;
                 block_num -= 256;
             }
-            io::ide_early_pio_sync_read((((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, (blocks + ((*elf64_phdr).p_filesz % io::SECTOR_SIZE != 0) as u64) as u8, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num - (*elf64_phdr).p_paddr % io::SECTOR_SIZE) as *mut u8);
+            ide_early_pio_sync_read((((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, (blocks + ((*elf64_phdr).p_filesz % io::SECTOR_SIZE != 0) as u64) as u8, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num - (*elf64_phdr).p_paddr % io::SECTOR_SIZE) as *mut u8);
         }
         if ((*elf64_phdr).p_paddr + (*elf64_phdr).p_filesz) as usize > KERNEL_SIZE
         {
-            KERNEL_SIZE = ((*elf64_phdr).p_paddr + (*elf64_phdr).p_memsz) as usize;
+            *kernel_size = ((*elf64_phdr).p_paddr + (*elf64_phdr).p_memsz) as usize;
         }
     }
 }
 
 unsafe fn load_bss(elf64_phdr : *mut Elf64Phdr)
 {
-    memset((*elf64_phdr).p_paddr as *mut u8, 0, (*elf64_phdr).p_memsz as usize);
+    // memset((*elf64_phdr).p_paddr as *mut u8, 0, (*elf64_phdr).p_memsz as usize);
+    let mut start_ptr = (*elf64_phdr).p_paddr as *mut u64;
+    let mut var = (*elf64_phdr).p_memsz as isize;
+    while var > 0 {
+        *start_ptr = 0;
+        var -= 8;
+        start_ptr = start_ptr.offset(1);
+    }
 }
 
 
@@ -143,6 +219,7 @@ pub unsafe fn kernel_relocation(elf64_ehdr : *mut Elf64Ehdr)
     let mut shdr;
     let mut phdr;
     let mut var = 1;
+    let mut kernel_size = 0;
     unsafe {
         phdr = ((elf64_ehdr as u64 + (*elf64_ehdr).e_phoff) as *mut Elf64Phdr).offset(1);
         
@@ -150,13 +227,13 @@ pub unsafe fn kernel_relocation(elf64_ehdr : *mut Elf64Ehdr)
         {
             if (*phdr).p_type == (SegmentType::PtLoad as u32)
             {
-                load_system_section(phdr);
+                load_system_section(phdr, &mut kernel_size);
             }
             phdr = phdr.offset(1);
             var += 1;
         }
         let start_pos = (*elf64_ehdr).e_shoff - (*elf64_ehdr).e_shoff % io::SECTOR_SIZE;
-        io::ide_early_pio_sync_read(((start_pos / io::SECTOR_SIZE) + 10) as u32, ((*elf64_ehdr).e_shoff + ((*elf64_ehdr).e_shnum  as u64) * (size_of::<Elf64Shdr>() as u64) - start_pos).div_ceil(io::SECTOR_SIZE) as u8 , (elf64_ehdr as *mut u8).offset(4096));
+        ide_early_pio_sync_read(((start_pos / io::SECTOR_SIZE) + 10) as u32, ((*elf64_ehdr).e_shoff + ((*elf64_ehdr).e_shnum  as u64) * (size_of::<Elf64Shdr>() as u64) - start_pos).div_ceil(io::SECTOR_SIZE) as u8 , (elf64_ehdr as *mut u8).offset(4096));
         shdr = ((elf64_ehdr as u64 + (*elf64_ehdr).e_shoff % 512) + 4096) as *mut Elf64Shdr;
         var = 0;
         while var < (*elf64_ehdr).e_shnum
@@ -168,5 +245,6 @@ pub unsafe fn kernel_relocation(elf64_ehdr : *mut Elf64Ehdr)
             shdr = shdr.offset(1);
             var += 1;
         }
+        KERNEL_SIZE = kernel_size;
     }
 }

@@ -2,16 +2,16 @@ use core::{ffi::{c_char, c_void, CStr}, alloc::Layout, ptr::null_mut, mem::size_
 
 use alloc::{vec::Vec, collections::BTreeMap};
 
-use crate::{kernel::{console::CONSOLE, device::DevT, process::PCB, bitmap::BitMap, math::{pow, self}, buffer::Buffer, semaphore::RWLock, list::ListHead, sched::get_current_running_process, Off}, mm::memory::PAGE_SIZE, fs::ext4::{ext4_get_logic_block_idx, ext4_inode_format}};
+use crate::{kernel::{console::CONSOLE, device::DevT, process::PCB, bitmap::BitMap, math::{pow, self}, buffer::Buffer, semaphore::RWLock, list::ListHead, sched::get_current_running_process, Off}, mm::memory::PAGE_SIZE, fs::ext4::{ext4_get_logic_block_idx, ext4_inode_format}, printk};
 
-use super::{ext4::{Idx, Ext4SuperBlock, Ext4GroupDesc, ext4_inode_read, Ext4Inode, ext4_find_entry, ext4_match_name, Ext4DirEntry2, self}, namei::FSPermission};
+use super::{ext4::{Idx, Ext4SuperBlock, Ext4GroupDesc, ext4_inode_read, Ext4Inode, ext4_find_entry, ext4_match_name, Ext4DirEntry2, self, ext4_inode_block_read}, namei::FSPermission};
 pub static mut FS : FileSystem = FileSystem::new();
 
 pub struct FileSystem
 {
     logical_part : BTreeMap<DevT, LogicalPart>,
-    iroot : *mut Inode,
-    imount : *mut Inode,
+    iroot : *mut FileStruct,
+    imount : *mut FileStruct,
     root_dev : DevT
 }
 
@@ -53,6 +53,24 @@ impl FileStruct {
 
 impl FileSystem {
 
+    pub fn read_file_logic_block(&mut self, file_t : *mut FileStruct, block_idx : Idx) -> *mut Buffer
+    {
+        unsafe
+        {
+            let logic_part = self.logical_part.get_mut(&(*(*file_t).inode).dev);
+            match logic_part {
+                Some(part) => 
+                {
+                    match part.fs_type {
+                        FSType::Ext4 => ext4_inode_block_read(part, (*file_t).inode, block_idx),
+                        _ => panic!("unsupport fs type!\n"),
+                    }
+                },
+                None => null_mut(),
+            }
+        }
+    }
+
     pub fn read_file(&mut self, file_t : *mut FileStruct, buffer : *mut c_void, len : usize, offset : Off) -> i64
     {
         unsafe
@@ -86,10 +104,10 @@ impl FileSystem {
         }
     }
 
-    pub fn get_iroot(&self) -> *mut Inode
+    pub fn get_froot(&self) -> *mut FileStruct
     {
         unsafe {
-            (*self.iroot).count += 1;
+            (*self.iroot).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             self.iroot
         }
 
@@ -146,9 +164,9 @@ impl FileSystem {
                 var += 1;
             }
             // get root dir
-            self.iroot = new_sb.get_inode(2);
-            self.imount = new_sb.get_inode(2);
-            (*self.iroot).mount = dev;
+            self.iroot = FS.get_file(dev, 2, FileFlag::empty());
+            self.imount = FS.get_file(dev, 2, FileFlag::empty());
+            (*(*self.iroot).inode).mount = dev;
         }
 
     }
@@ -170,7 +188,7 @@ impl FileSystem {
     {
         unsafe
         {
-            let desc = unsafe { alloc::alloc::alloc(Layout::new::<Ext4GroupDesc>()) as *mut Ext4GroupDesc };
+            let desc = alloc::alloc::alloc(Layout::new::<Ext4GroupDesc>()) as *mut Ext4GroupDesc;
             let src = disk_read(dev, idx, 2);
             (*src).read_from_buffer(desc as *mut c_void, 0, size_of::<Ext4GroupDesc>());
             desc
@@ -268,13 +286,24 @@ impl Inode {
         }
     }
 
+    pub fn is_file(&self) -> bool
+    {
+        unsafe
+        {
+            match (*self.logical_part_ptr).fs_type {
+                FSType::None => panic!("unsupport fs\n"),
+                FSType::Ext4 => ext4::is_file((*(self.inode_desc_ptr as *mut Ext4Inode)).i_mode),
+            }
+        }
+    }
+
     pub fn get_size(&self) -> usize
     {
         unsafe
         {
             match (*self.logical_part_ptr).fs_type {
                 FSType::None => panic!("unsupport fs\n"),
-                FSType::Ext4 => (*(self.inode_desc_ptr as *mut Ext4Inode)).i_size_lo as usize + (((*(self.inode_desc_ptr as *mut Ext4Inode)).i_size_lo as usize) << 32),
+                FSType::Ext4 => (*(self.inode_desc_ptr as *mut Ext4Inode)).i_size_lo as usize + (((*(self.inode_desc_ptr as *mut Ext4Inode)).i_size_high as usize) << 32),
             }
         }
     }
@@ -301,6 +330,45 @@ impl DirEntry {
     pub fn empty() -> Self
     {
         Self { dir_entry_type: FSType::None, entry_ptr: null_mut() }
+    }
+
+    pub fn print_entry_name(&self)
+    {
+        unsafe
+        {
+            match self.dir_entry_type {
+                FSType::None => panic!("unsupport fs\n"),
+                FSType::Ext4 => {
+                    printk!("entery file name :{}\n", CStr::from_ptr((*(self.entry_ptr as *const Ext4DirEntry2)).name.as_ptr()).to_str().unwrap())
+                },
+            }
+        }
+    }
+
+    pub fn to_next_entry(&mut self)
+    {
+        unsafe
+        {
+            match self.dir_entry_type {
+                FSType::None => panic!("unsupport fs\n"),
+                FSType::Ext4 => {
+                    self.entry_ptr = self.entry_ptr.offset((*(self.entry_ptr as *mut Ext4DirEntry2)).rec_len as isize)
+                },
+            }
+        }
+    }
+
+    pub fn name_length(&self) -> usize
+    {
+        unsafe
+        {
+            match self.dir_entry_type {
+                FSType::None => panic!("unsupport fs\n"),
+                FSType::Ext4 => {
+                    (*(self.entry_ptr as *mut Ext4DirEntry2)).name_len as usize
+                },
+            }
+        }
     }
 
     pub fn dispose(&self)
@@ -417,6 +485,7 @@ impl LogicalPart {
                 None => {
                     let inode = self.get_inode(nr);
                     let f_struct = alloc::alloc::alloc(Layout::new::<FileStruct>()) as *mut FileStruct;
+                    (*f_struct) = FileStruct::new();
                     if !f_struct.is_null()
                     {
                         (*f_struct).inode = inode;
@@ -437,6 +506,7 @@ impl LogicalPart {
             let result = self.data_map.get(&idx);
             if result.is_some()
             {
+                (**result.unwrap()).count += 1;
                 *result.unwrap()
             }
             else {
@@ -471,7 +541,7 @@ impl LogicalPart {
         Self { fs_type: FSType::None, super_block: null_mut(), group_desc: Vec::new(), logic_block_size: 0, logic_block_count: 0, inode_count: 0, dev: 0, file_map: BTreeMap::new(), inode_per_group: 0, data_map: BTreeMap::new(), blocks_per_group: 0 }
     }
 
-    fn read_block(&self, logic_block_no : usize) -> *mut Buffer
+    pub fn read_block(&self, logic_block_no : usize) -> *mut Buffer
     {
         disk_read(self.dev,  self.logic_block_size as u64 * 2 * logic_block_no as u64, (self.logic_block_size * 2).try_into().unwrap())
     }
@@ -558,13 +628,21 @@ pub fn sys_open(file_name : *const c_char, flags : FileFlag, mode : FSPermission
 }
 
 
-#[inline]
+#[inline(always)]
 fn get_device_buffer(dev : DevT, block : Idx) -> *mut Buffer
 {
     unsafe
     {
-        let buffer =alloc::alloc::alloc(Layout::new::<Buffer>()) as *mut Buffer;
-        *buffer = Buffer::new(4096);
+        let logic_part = FS.logical_part.get_mut(&dev);
+        let buffer;
+        if logic_part.is_some()
+        {
+            buffer = logic_part.unwrap().get_buffer(block);
+        }
+        else
+        {
+            return null_mut();
+        }
         buffer
     }
 }
@@ -574,6 +652,17 @@ pub fn disk_read(dev : DevT, idx : Idx, blocks : usize) -> *mut Buffer
     unsafe
     {
         let buffer = get_device_buffer(dev, idx);
+        (*buffer).read_from_device(dev, idx, blocks);
+        buffer
+    }
+}
+
+pub fn early_disk_read(dev : DevT, idx : Idx, blocks : usize) -> *mut Buffer
+{
+    unsafe
+    {
+        let buffer = alloc::alloc::alloc(Layout::new::<Buffer>()) as *mut Buffer;
+        (*buffer) = Buffer::new(4096);
         (*buffer).read_from_device(dev, idx, blocks);
         buffer
     }

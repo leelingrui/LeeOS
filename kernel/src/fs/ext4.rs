@@ -1,6 +1,6 @@
 use core::{ffi::{c_char, c_void}, cmp::min, ptr::null_mut, alloc::Layout};
 
-use crate::{fs::file::{EOF, FS, FSType}, kernel::{buffer::Buffer, string::EOS, sched::get_current_running_process}, mm::memory::PAGE_SIZE};
+use crate::{fs::file::{EOF, FS, FSType}, kernel::{buffer::{Buffer, self}, string::{EOS, is_separator}, sched::get_current_running_process}, mm::memory::PAGE_SIZE};
 
 use super::{file::{LogicalPart, Inode, DirEntry}, namei::FSPermission};
 
@@ -69,9 +69,13 @@ pub fn ext4_match_name(name : *const c_char, entry_name : *const c_char, next : 
         {
             return false;
         }
-        if *lhs != EOS
+        if *lhs != EOS && !is_separator(*lhs)
         {
             return false;
+        }
+        if is_separator(*lhs)
+        {
+            lhs = lhs.offset(1);
         }
         *next = lhs as *mut c_char;
         true
@@ -115,6 +119,8 @@ pub fn ext4_find_entry(dir : &mut Inode, name : *const c_char, next : &mut *mut 
                 *result_entry_ptr = direntry;
                 break;
             }
+            direntry.print_entry_name();
+            direntry_ptr = (direntry_ptr as *mut c_void).offset((*direntry_ptr).rec_len as isize) as *mut Ext4DirEntry2;
             if direntry.get_entry_point_to() == 0
             {
                 direntry.dir_entry_type = FSType::None;
@@ -156,7 +162,7 @@ pub fn ext4_get_logic_block_idx(logical_part : &mut LogicalPart, inode : *mut In
     unsafe
     {
         let ext4_inode = (*inode).inode_desc_ptr as *mut Ext4Inode;
-        let block_desc_node = &mut (*ext4_inode).i_block as *mut i32 as *mut Ext4InodeBlockDesc;
+        let block_desc_node = &mut (*ext4_inode).i_block as *mut i32 as *mut Ext4InodeExtentDesc;
         assert!((*block_desc_node).head.eh_magic as u16 == 0xf30a);
         loop {
             if (*block_desc_node).head.eh_depth == 0
@@ -172,7 +178,32 @@ pub fn ext4_get_logic_block_idx(logical_part : &mut LogicalPart, inode : *mut In
                 panic!("read file block out of range!\n");
             }
             else {
-                unimplemented!();
+                let mut buff = null_mut();
+                let mut var = 0;
+                let mut extent_block = null_mut();
+                while var < ((*block_desc_node).head.eh_entries - 1) as usize {
+                    if (*block_desc_node).node[var + 1].nonleaf.ei_block as Idx > idx
+                    {
+                        let dst_block = (((*block_desc_node).node[var].nonleaf.ei_leaf_hi as Idx) << 32) + ((*block_desc_node).node[var].nonleaf.ei_leaf_lo as Idx);
+                        buff = logical_part.read_block(dst_block as usize);
+                        extent_block = (*buff).buffer as *mut Ext4ExtentBlock;
+                        break;
+                    }
+                    var += 1;
+                }
+                while !extent_block.is_null() && (*extent_block).head.eh_depth != 0 {
+                    var = 0;
+                    while ((*extent_block).node[var].nonleaf.ei_block as Idx) < idx {
+                        let dst_block = (((*extent_block).node[var].nonleaf.ei_leaf_hi as Idx) << 32) + ((*extent_block).node[var].nonleaf.ei_leaf_lo as Idx);
+                        logical_part.release_buffer(buff);
+                        buff = logical_part.read_block(dst_block as usize);
+                        extent_block = (*buff).buffer as *mut Ext4ExtentBlock;
+                    }
+                }
+                while ((*extent_block).node[var].leaf_node.ee_block as Idx + (*extent_block).node[var].leaf_node.ee_len as Idx) > idx {
+                    logical_part.release_buffer(buff);
+                    return (*extent_block).node[var].leaf_node.ee_start_lo as Idx + (((*extent_block).node[var].leaf_node.ee_start_hi as Idx) << 32);
+                }
             }
         }
     }
@@ -199,6 +230,20 @@ pub fn ext2_or_ext3_get_logic_block_idx(logical_part : &mut LogicalPart, inode :
     get_logic_block(logical_part, inode, EXT4_N_BLOCKS as u64 - 1, create, level)
 }
 
+pub fn ext4_inode_block_read(logical_part : &mut LogicalPart, inode : *mut Inode, mut block_idx : Idx) -> *mut Buffer
+{
+    unsafe
+    {
+        block_idx = logical_part.get_logic_block_idx(inode, block_idx, false);
+        let buffer = logical_part.get_buffer(block_idx);
+        if !(*buffer).is_avaliable()
+        {
+            (*buffer).read_from_device(logical_part.dev, block_idx * 2 * logical_part.logic_block_size as Idx, 2 * logical_part.logic_block_size as usize);
+        }
+        buffer
+    }
+}
+
 pub fn ext4_inode_read(logical_part : &mut LogicalPart, inode : *mut Inode, mut dst : *mut c_void, len : usize, offset : usize) -> i64
 {
     unsafe
@@ -214,12 +259,7 @@ pub fn ext4_inode_read(logical_part : &mut LogicalPart, inode : *mut Inode, mut 
         let mut left = min(len, file_size - offset);
         while left > 0 {
             let mut idx = offset as u64 / 1024 / logical_part.logic_block_size as u64;
-            idx = logical_part.get_logic_block_idx(inode, idx, false);
-            let buffer = logical_part.get_buffer(idx);
-            if !(*buffer).is_avaliable()
-            {
-                (*buffer).read_from_device(logical_part.dev, idx * 2 * logical_part.logic_block_size as Idx, 2 * logical_part.logic_block_size as usize);
-            }
+            let buffer = ext4_inode_block_read(logical_part, inode, idx);
             let start = read_begin % (1024 * logical_part.logic_block_size as usize);
             let read_num = min((1024 * logical_part.logic_block_size as usize) - start, left);
             left -= read_num;
@@ -305,16 +345,29 @@ pub struct PartEntry
 }
 
 #[repr(C)]
-pub union Ext4InodeDescTree {
+pub union Ext4ExtentDescTreeNode {
     leaf_node : core::mem::ManuallyDrop<Ext4Extent>,
     nonleaf : core::mem::ManuallyDrop<Ext4ExtentIdx>
 }
 
 #[repr(C)]
-pub struct Ext4InodeBlockDesc
+pub struct Ext4InodeExtentDesc
 {
     head : Ext4ExtentHeader,
-    node : [Ext4InodeDescTree; 4]
+    node : [Ext4ExtentDescTreeNode; 4]
+}
+
+#[repr(C)]
+pub struct Ext4ExtentBlock
+{
+    head : Ext4ExtentHeader,
+    node : [Ext4ExtentDescTreeNode; 340],
+    tail : Ext4ExtentTail
+}
+
+pub struct Ext4ExtentTail
+{
+    et_check_sum : u32
 }
 
 #[repr(C)]

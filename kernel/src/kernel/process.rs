@@ -1,14 +1,14 @@
 use core::{arch::asm, ffi::{c_char, c_void}, ptr::{null_mut, null}, alloc::{GlobalAlloc, Layout}, cmp, cell::OnceCell};
 
 use alloc::{collections::{BinaryHeap, btree_map}, vec::Vec};
-use crate::{printk, kernel::{global, cpu::get_cpu_number, sched::{self, set_running_process, get_current_running_process}, idle, interrupt}, fs::{file::{STDOUT, Inode, FileStruct}, namei::Fd}, mm::{mm_type, memory::{USER_STACK_TOP, PAGE_SIZE}}};
+use crate::{printk, kernel::{global::{self, KERNEL_DATA_IDX, KERNEL_CODE_IDX, set_tss64, GDT, TSS_IDX, KERNEL_TSS}, cpu::get_cpu_number, sched::{self, set_running_process, get_current_running_process}, idle, interrupt}, fs::{file::{STDOUT, Inode, FileStruct, FS}, namei::Fd}, mm::{mm_type::{self, MmapType}, memory::{USER_STACK_TOP, PAGE_SIZE, link_user_page}}, logk, bochs_break};
 pub type Priority = u8;
 use crate::mm::memory;
 
 use super::{execve, global::{USER_DATA_IDX, USER_CODE_IDX}};
 pub type PCB = ProcessControlBlock;
 const MAX_PROGRESS_NUM : Pid = 65536;
-const MAX_PROCSEE_STACK_SIZE : usize = 0x4000000;
+pub const MAX_PROCSEE_STACK_SIZE : usize = 0x4000000;
 static mut TASK_TABLE : [*mut PCB ;MAX_PROGRESS_NUM as usize] = [null_mut(); MAX_PROGRESS_NUM as usize];
 static mut WAIT_MAP : btree_map::BTreeMap<Priority, *mut PCB> = btree_map::BTreeMap::new();
 static mut IDLE : *mut PCB = null_mut();
@@ -57,7 +57,7 @@ struct TaskFrame
     r13 : u64,
     r14 : u64,
     r15 : u64,
-    reserved : [u64; 6],
+    reserved : [u64; 12],
     rbp : u64,
     rip : u64
 }
@@ -71,9 +71,8 @@ extern "C" { pub fn interrupt_exit(); }
 
 fn init_thread()
 {
-    loop {
-        
-    }
+    logk!("kernel init!\n");
+    task_to_user_mode();
 }
 
 type Pid = i32;
@@ -151,7 +150,6 @@ fn task_to_user_mode()
         (*pt_regs).rbx = 3;
         (*pt_regs).rsi = 4;
         (*pt_regs).rdi = 5;
-        (*pt_regs).rbp = USER_STACK_TOP as u64;
         (*pt_regs).r8 = 6;
         (*pt_regs).r9 = 7;
         (*pt_regs).r10 = 8;
@@ -166,9 +164,10 @@ fn task_to_user_mode()
         (*pt_regs).fs = (USER_DATA_IDX << 3 | 0b11) as u16;
         (*pt_regs).gs = 0;
         (*pt_regs).cs = (USER_CODE_IDX << 3 | 0b11) as u64;
-        (*pt_regs).rsp = USER_STACK_TOP as u64;
         (*pt_regs).rflags = 0 << 12 | 0b10 | 1 << 9;
+        logk!("calling init\n");
         execve::sys_execve("bin/init\0".as_ptr() as *const c_char, null_mut(), null_mut());
+        panic!("exec /bin/init failure")
     }
 
 }
@@ -201,7 +200,6 @@ impl ProcessControlBlock {
     pub fn get_iroot(&mut self) -> *mut FileStruct
     {
         unsafe {
-            (*self.iroot).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             self.iroot   
         }
     }
@@ -209,7 +207,6 @@ impl ProcessControlBlock {
     pub fn get_ipwd(&mut self) -> *mut FileStruct
     {
         unsafe {
-            (*self.ipwd).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             self.ipwd
         }
     }
@@ -232,7 +229,7 @@ impl ProcessControlBlock {
     pub fn get_process_kernel_stack(&self) -> *mut c_void
     {
         unsafe {
-            ((self as *const Self) as *const c_void).offset(THREAD_SIZE as isize) as *mut c_void
+            ((self as *const Self) as *const TaskUnion).offset(1) as *mut c_void
         }
     }
 
@@ -241,7 +238,11 @@ impl ProcessControlBlock {
         unsafe
         {
             let result = memory::MEMORY_POOL.alloc(Layout::new::<TaskUnion>()) as *mut ProcessControlBlock;
-            (*result) = ProcessControlBlock { kernel_stack:null_mut(), priority: 0, jiffies: 0, name: [0; 16], uid: 0, gid: 0, pid: 0, ppid: 0, pgid: 0, pml4: null_mut(), wait_pid: 0, blocked: 0, mm: mm_type::MMStruct::new(result), stack: null_mut(), iroot: null_mut(), ipwd: null_mut(), start_ptregs: PtRegs::default(), files: Vec::new() };
+            if result.is_null()
+            {
+                panic!("system out of memory!");
+            }
+            (*result) = ProcessControlBlock { kernel_stack:null_mut(), priority: 0, jiffies: 0, name: [0; PROCESS_NAME_LEN], uid: 0, gid: 0, pid: 0, ppid: 0, pgid: 0, pml4: null_mut(), wait_pid: 0, blocked: 0, mm: mm_type::MMStruct::new(result), stack: null_mut(), iroot: null_mut(), ipwd: null_mut(), start_ptregs: PtRegs::default(), files: Vec::new() };
             result
         }
     }
@@ -272,8 +273,10 @@ impl ProcessControlBlock {
         unsafe
         {
             let pcb_addr = ProcessControlBlock::create_task_control_block();
-            (*pcb_addr).mm.create_new_mem_area(USER_STACK_TOP.offset(-(MAX_PROCSEE_STACK_SIZE as isize)) as u64, memory::USER_STACK_TOP as u64);
+            let stack_vma = (*pcb_addr).mm.create_new_mem_area(USER_STACK_TOP.offset(-(MAX_PROCSEE_STACK_SIZE as isize)) as u64, memory::USER_STACK_TOP as u64);
+            (*stack_vma).set_prot(MmapType::PROT_READ | MmapType::PROT_WRITE);
             let process_frame = ((alloc::alloc::alloc(Layout::from_size_align(4096, 4096).unwrap()) as *mut c_void).offset(PAGE_SIZE as isize) as *mut TaskFrame).offset(-1);
+            link_user_page(USER_STACK_TOP.offset(-(PAGE_SIZE as isize)), (*stack_vma).get_prot());
             (*pcb_addr).stack = process_frame as *mut c_void;
             (*process_frame).rbx = 1;
             (*process_frame).r12 = 2;
@@ -283,6 +286,8 @@ impl ProcessControlBlock {
             (*process_frame).rbp = 6;
             (*process_frame).rip = func_addr;
             (*pcb_addr).priority = prio;
+            (*pcb_addr).ipwd = FS.get_froot();
+            (*pcb_addr).iroot = FS.get_froot();
             let pid = PCB::get_avaliable_pid();
             TASK_TABLE[pid as usize] = pcb_addr;
             (*pcb_addr).pid = pid;
@@ -298,7 +303,8 @@ pub fn process_init()
     {
         printk!("initing task\n");
         IDLE = PCB::create_new_process(idle::idle as u64, 255);
-        PCB::create_new_process(init_thread as u64, 1);
+        let aim = PCB::create_new_process(init_thread as u64, 1);
+        // direct_to_usermode(aim);
     }
 
 }
@@ -306,12 +312,7 @@ pub fn process_init()
 #[allow(unused)]
 unsafe fn direct_to_usermode(pcb : *mut ProcessControlBlock)
 {
-    set_running_process(pcb);
-    asm!(
-        "mov rsp, {aim_stackframe}",
-        "jmp interrupt_exit",
-        aim_stackframe = in(reg) (*pcb).stack
-    )
+    task_switch(pcb)
 }
 
 
@@ -319,6 +320,7 @@ unsafe fn task_switch(pcb : *mut ProcessControlBlock)
 {
     let process_frame = (*pcb).stack;
     let old_pcb = get_current_running_process();
+    let dst_stack = (*pcb).get_process_kernel_stack() as u64;
     set_running_process(pcb);
     if !old_pcb.is_null()
     {
@@ -333,7 +335,7 @@ unsafe fn task_switch(pcb : *mut ProcessControlBlock)
             in("rax") &((*old_pcb).stack) as *const *mut c_void
         );
     }
-
+    set_tss64(&mut KERNEL_TSS, dst_stack, dst_stack, dst_stack, dst_stack, dst_stack, dst_stack, dst_stack, dst_stack, dst_stack, dst_stack);
     asm!(
         "mov rsp, rax",
         "mov rbx, [rsp + 0 * 8]",
@@ -342,6 +344,7 @@ unsafe fn task_switch(pcb : *mut ProcessControlBlock)
         "mov r14, [rsp + 3 * 8]",
         "mov r15, [rsp + 4 * 8]",
         "add rsp, 8 * 5",
+        "xchg bx, bx",
         in("rax") process_frame
     )
 }

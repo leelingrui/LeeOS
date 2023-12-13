@@ -2,8 +2,8 @@ use core::{intrinsics::size_of, default::Default, arch::asm, fmt};
 use crate::{printk, kernel::string::memset};
 
 const GDT_SIZE : usize = 8192;
-static mut GDT : [DescriptorT; GDT_SIZE] = [DescriptorT(0); GDT_SIZE];
-static mut KERNEL_TSS : TaskStateSegment = TaskStateSegment::new();
+pub static mut GDT : [DescriptorT; GDT_SIZE] = [DescriptorT(0); GDT_SIZE];
+pub static mut KERNEL_TSS : TaskStateSegment = TaskStateSegment::new();
 #[no_mangle]
 pub static mut GDT_PTR : PointerT = PointerT{ base: 0, limit: 0 };
 use bitfield::bitfield;
@@ -23,7 +23,7 @@ pub struct PointerT
 pub type TSS = TaskStateSegment; 
 
 #[repr(C, packed)]
-struct TaskStateSegment
+pub struct TaskStateSegment
 {
     reserved0 : u32,
     rsp0 : u64,
@@ -109,7 +109,7 @@ pub fn get_gdt(no : isize) -> DescriptorT
     }
 }
 
-fn set_tss64(tss_ptr : &mut TaskStateSegment, rsp0 : u64, rsp1 : u64, rsp2 : u64, ist1 : u64, ist2 : u64, ist3 : u64, ist4 : u64, ist5 : u64, ist6 : u64, ist7 : u64)
+pub fn set_tss64(tss_ptr : &mut TaskStateSegment, rsp0 : u64, rsp1 : u64, rsp2 : u64, ist1 : u64, ist2 : u64, ist3 : u64, ist4 : u64, ist5 : u64, ist6 : u64, ist7 : u64)
 {
     tss_ptr.rsp0 = rsp0;
     tss_ptr.rsp1 = rsp1;
@@ -136,7 +136,6 @@ pub fn tss_init()
             in("ax") (TSS_IDX << 3)
         )
     }
-
 }
 
 #[no_mangle]

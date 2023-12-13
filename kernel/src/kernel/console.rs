@@ -108,8 +108,7 @@ impl Console
                 NUL => break,
                 BEL => break,
                 HT => break,
-                VT => break,
-                FF => self.lf(),
+                FF | VT => self.lf(),
                 DEL => self.del(),
                 LF => { self.lf(); self.cr()},
                 CR => self.cr(),
@@ -198,7 +197,6 @@ impl Console
         self.set_cursor();
         self.set_screen();
         self.clear_all();
-        unsafe { bochs_break!() };
         crate::printk!("{START_STR}");
 
     }

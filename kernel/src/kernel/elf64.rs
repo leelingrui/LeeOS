@@ -320,8 +320,8 @@ pub fn load_elf64(file_t : *mut FileStruct) -> i64
         {
             return EOF;
         }
-        let mut phdr = null_mut() as *mut Elf64Phdr;
-        sys_mmap(null_mut(), (*ehdr).e_phnum as usize * (*ehdr).e_phentsize as usize + size_of::<Elf64Ehdr>(), MmapType::PROT_KERNEL | MmapType::PROT_READ, MmapType::MAP_PRIVATE, null_mut(), 0);
+        let mut phdr = (*ehdr).e_phoff as *mut Elf64Phdr;
+        // __do_mmap(null_mut(), (*ehdr).e_phnum as usize * (*ehdr).e_phentsize as usize + size_of::<Elf64Ehdr>(), MmapType::PROT_KERNEL | MmapType::PROT_READ, MmapType::MAP_PRIVATE, null_mut(), 0);
         FS.read_file(file_t, (*ehdr).e_phoff as *mut c_void, (*ehdr).e_phnum as usize * (*ehdr).e_phentsize as usize, (*ehdr).e_phoff as Off);
         let mut var = 0;
         while var < (*ehdr).e_phnum {
@@ -348,9 +348,8 @@ fn load_segment64(elf64_phdr : *mut Elf64Phdr, file_t : *mut FileStruct) -> bool
     {
         let mut prot = MmapType::empty();
         let mut flags = MmapType::empty();
-        let mut block_num = 0u64;
-        let loffset = (*elf64_phdr).p_filesz as usize % PAGE_SIZE;
-        let pages = ((*elf64_phdr).p_memsz as usize + loffset).div_ceil(PAGE_SIZE) * PAGE_SIZE;
+        let loffset = (*elf64_phdr).p_vaddr as usize % PAGE_SIZE;
+        let map_size = ((*elf64_phdr).p_memsz as usize + loffset).div_ceil(PAGE_SIZE) * PAGE_SIZE;
         // Calculate Load Infomation
         flags.insert(MmapType::MAP_PRIVATE);
 
@@ -369,23 +368,28 @@ fn load_segment64(elf64_phdr : *mut Elf64Phdr, file_t : *mut FileStruct) -> bool
             prot.insert(MmapType::PROT_READ);
         }
         let vma;
+        if (*elf64_phdr).p_vaddr == 0
+        {
+            FS.read_file(file_t, null_mut(), (*elf64_phdr).p_filesz as usize, (*elf64_phdr).p_offset as usize);
+            return true;
+        }
         if (*elf64_phdr).p_filesz == 0
         {
             flags.insert(MmapType::MAP_ANONYMOUS);
-            vma = __do_mmap(((*elf64_phdr).p_vaddr as usize - loffset) as *mut c_void, (*elf64_phdr).p_memsz as usize + loffset, prot, flags, null_mut(), (*elf64_phdr).p_offset as usize - loffset);
+            vma = __do_mmap(((*elf64_phdr).p_vaddr as usize - loffset) as *mut c_void, map_size, prot, flags, null_mut(), (*elf64_phdr).p_offset as usize - loffset);
         }
         else
         {
-            vma = __do_mmap(((*elf64_phdr).p_vaddr as usize - loffset) as *mut c_void, (*elf64_phdr).p_filesz as usize + loffset, prot, flags, file_t, (*elf64_phdr).p_offset as usize - loffset);
+            vma = __do_mmap(((*elf64_phdr).p_vaddr as usize - loffset) as *mut c_void, map_size, prot, flags, file_t, (*elf64_phdr).p_offset as usize - loffset);
 
         }
         if vma.is_null()
         {
-            true
+            false
         }
         else
         {
-            false
+            true
         }
     }
 }

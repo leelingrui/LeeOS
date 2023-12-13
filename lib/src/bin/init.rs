@@ -2,7 +2,8 @@
 #![no_std]
 #![feature(start)]
 use core::panic::PanicInfo;
-
+use lee_os::fs::file::STDOUT;
+use lib::unistd::{self, write};
 #[panic_handler]
 pub fn panic(_info: &PanicInfo) -> !
 {
@@ -21,5 +22,6 @@ extern "C" fn _start()
 
 fn main()
 {
-
+    let start_str = "init success";
+    write(STDOUT, start_str.as_ptr() as *const i8, start_str.len());
 }

@@ -1,3 +1,5 @@
+.globl _syscall_start
+.globl interrupt_exit
 
 .macro SAVE_CONTEXT
     sub rsp, 8 * 16
@@ -66,6 +68,7 @@ interrupt_exit:
     // call task signal
     RECOVER_CONTEXT
     add rsp, 0x10
+    xchg bx, bx
     iretq
 
 _syscall_start:

@@ -2,7 +2,7 @@ use core::{ffi::{c_void, CStr}, alloc::Layout};
 
 use crate::{logk, kernel::device::{get_device, DeviceType, DevT}, fs::file::FS, printk};
 
-use super::{file::disk_read, ext4::{Ext4DirEntry, Ext4DirEntry2}};
+use super::{file::early_disk_read, ext4::{Ext4DirEntry, Ext4DirEntry2}};
 
 static mut SUPER_TABLE : [Superblock; SUPER_NR] = [Superblock::empty(); SUPER_NR];
 #[derive(Clone, Copy)]
@@ -23,9 +23,9 @@ impl Superblock {
 
 unsafe fn test_fs()
 {
-    let root = FS.get_iroot();
+    let root = FS.get_froot();
     let mut buffer = alloc::alloc::alloc(Layout::from_size_align_unchecked(4096, 1)) as *mut c_void;
-    let _read_size = FS.read_inode(root, buffer, 4096, 0);
+    let _read_size = FS.read_inode((*root).inode, buffer, 4096, 0);
     if _read_size != 0
     {
 
@@ -57,8 +57,9 @@ fn read_super_block(dev : DevT) -> *mut c_void
     unsafe
     {
         let sb = alloc::alloc::alloc(Layout::new::<[c_void; 1024]>());
-        let block1 = disk_read(dev, 2, 2);
+        let block1 = early_disk_read(dev, 2, 2);
         (*block1).read_from_buffer(sb as *mut c_void, 0, 1024);
+        (*block1).dispose();
         sb as *mut c_void
     }
 

@@ -4,9 +4,9 @@ KERNEL_FILES:=$(KERNEL_SRC)/lib.rs $(KERNEL_SRC)/kernel/console.rs $(KERNEL_SRC)
 	$(KERNEL_SRC)/kernel/mod.rs $(KERNEL_SRC)/kernel/relocation.rs $(KERNEL_SRC)/kernel/semaphore.rs $(KERNEL_SRC)/kernel/string.rs $(KERNEL_SRC)/kernel/interrupt.asm \
 	$(KERNEL_SRC)/kernel/entry.asm $(KERNEL_SRC)/kernel/global.rs $(KERNEL_SRC)/mm/memory.rs $(KERNEL_SRC)/kernel/bitmap.rs $(KERNEL_SRC)/kernel/clock.rs $(KERNEL_SRC)/kernel/math.rs \
 	$(KERNEL_SRC)/kernel/process.rs $(KERNEL_SRC)/mm/slub.rs $(KERNEL_SRC)/kernel/list.rs $(KERNEL_SRC)/mm/page.rs $(KERNEL_SRC)/kernel/fpu.rs  \
-	$(KERNEL_SRC)/kernel/cpu.rs $(KERNEL_SRC)/kernel/bitops.rs $(KERNEL_SRC)/kernel/syscall.rs \
+	$(KERNEL_SRC)/kernel/cpu.rs $(KERNEL_SRC)/kernel/bitops.rs $(KERNEL_SRC)/kernel/syscall.rs $(KERNEL_SRC)/fs/namei.rs $(KERNEL_SRC)/kernel/elf64.rs\
 	$(KERNEL_SRC)/fs/file.rs $(KERNEL_SRC)/fs/mod.rs $(KERNEL_SRC)/mm/mm_type.rs $(KERNEL_SRC)/kernel/sched.rs $(KERNEL_SRC)/fs/ntfs.rs $(KERNEL_SRC)/kernel/time.rs \
-	$(KERNEL_SRC)/fs/ext4.rs $(KERNEL_SRC)/fs/super_block.rs $(KERNEL_SRC)/kernel/device.rs $(KERNEL_SRC)/kernel/buffer.rs
+	$(KERNEL_SRC)/fs/ext4.rs $(KERNEL_SRC)/fs/super_block.rs $(KERNEL_SRC)/kernel/device.rs $(KERNEL_SRC)/kernel/buffer.rs $(KERNEL_SRC)/kernel/execve.rs
 ENTRYPOINT:=0x0xffff800000100000
 # RFLAGS+= target-feature=-crt-static
 RFLAGS:=$(strip ${RFLAGS})

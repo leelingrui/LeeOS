@@ -58,17 +58,17 @@ pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut FileStr
         else {
             return null_mut()
         }
-        (*file_t).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         *next = left;
         if *left == 0
         {
             return file_t;
         }
-        let right = strrsep(left);
-        if !right.is_null() || right < left
+        let mut right = strrsep(left);
+        if right.is_null() || right < left
         {
             return file_t;
         }
+        right = right.offset(1);
         *next = left;
         let mut result_entry = DirEntry::empty();
         loop
@@ -81,7 +81,7 @@ pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut FileStr
             let tmp_inode = FS.get_file((*(*file_t).inode).dev, result_entry.get_entry_point_to(), FileFlag::empty());
             FS.release_file(file_t);
             file_t = tmp_inode;
-            if (*(*file_t).inode).is_dir() || !permission((*file_t).inode, FSPermission::EXEC)
+            if !(*(*file_t).inode).is_dir() || !permission((*file_t).inode, FSPermission::EXEC)
             {
                 FS.release_file(file_t);
                 return null_mut();
@@ -116,8 +116,8 @@ pub fn namei(path : *const c_char) -> *mut FileStruct
         {
             return null_mut();
         }
-        let inode = FS.get_file((*(*dir).inode).dev, entry.get_entry_point_to(), FileFlag::empty());
+        let file_t = FS.get_file((*(*dir).inode).dev, entry.get_entry_point_to(), FileFlag::empty());
         entry.dispose();
-        inode
+        file_t
     }
 }

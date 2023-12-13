@@ -168,7 +168,7 @@ pub struct VMAreaStruct
 }
 
 impl MMStruct {
-    pub fn release_all(&self)
+    pub fn release_all(&mut self)
     {
         unsafe
         {
@@ -200,15 +200,20 @@ impl MMStruct {
             }
             let mut last_ptr: *mut VMAreaStruct = null_mut();
             let mut vm_ptr = self.mmap;
+            if (*vm_ptr).get_start() > start as u64
+            {
+                return self.create_new_mem_area(start as u64, start as u64 + length as u64);
+            }
             while !vm_ptr.is_null() {
-                if (*vm_ptr).get_end() < start as u64 && (*vm_ptr).get_end() as usize + 1  + length < max as usize
+                if (*vm_ptr).get_start() > start as u64 && (*last_ptr).get_end() as usize + 1  + length < max as usize
                 {
-                    while !vm_ptr.is_null() && (((*vm_ptr).get_start() - (*last_ptr).get_end()) as usize) < length && (*vm_ptr).get_start() as usize + length < max as usize
+                    while !last_ptr.is_null() && (((*vm_ptr).get_start() - (*last_ptr).get_end()) as usize) < length && (*vm_ptr).get_start() as usize + length < max as usize
                     {
                         last_ptr = vm_ptr;
                         vm_ptr = (*vm_ptr).get_next();
+                        continue;
                     }
-                    if vm_ptr.is_null() || (((*vm_ptr).get_start() - (*last_ptr).get_end()) as usize) > length || (*last_ptr).get_end() as usize + 1 + length > max as usize
+                    if !last_ptr.is_null() && ((((*vm_ptr).get_start() - (*last_ptr).get_end()) as usize) > length || (*last_ptr).get_end() as usize + 1 + length > max as usize)
                     {
                         if (*last_ptr).get_end() as usize + length > max as usize
                         {
@@ -222,6 +227,10 @@ impl MMStruct {
                     last_ptr = vm_ptr;
                     vm_ptr = (*vm_ptr).get_next();
                 }
+            }
+            if (*last_ptr).get_end() < max as u64
+            {
+                return self.create_new_mem_area((*last_ptr).get_end() + 1, (*last_ptr).get_end() + length as u64);
             }
             null_mut()
         }
@@ -240,17 +249,17 @@ impl MMStruct {
         todo!()
     }
 
-    pub fn contain(&mut self, addr : u64) -> bool
+    pub fn contain(&mut self, addr : u64) -> *mut VMAreaStruct
     {
         unsafe
         {
             let mut vma_ptr = self.mmap;
-            loop {
+            while !vma_ptr.is_null() {
                 if (*vma_ptr).vm_start < addr
                 {
                     if (*vma_ptr).vm_end > addr
                     {
-                        return true;
+                        return vma_ptr;
                     }
                     else {
                         vma_ptr = (*vma_ptr).get_next();
@@ -260,7 +269,7 @@ impl MMStruct {
                     break;
                 }
             }
-            false
+            null_mut()
         }
 
     }
@@ -282,18 +291,19 @@ impl MMStruct {
             self.insert_vma(vma_ptr);
             vma_ptr
         }
-    }
+    } 
 
     fn insert_vma(&mut self, mut new_vma : *mut VMAreaStruct) -> *mut VMAreaStruct
     {
         unsafe {
             let mut vma_ptr = self.mmap;
+            let mut last_ptr = null_mut();
             if vma_ptr.is_null()
             {
                 self.mmap = new_vma;
                 return new_vma;
             }
-            loop {
+            while !vma_ptr.is_null() {
                 let result = (*vma_ptr).partial_cmp(&*new_vma);
                 match result {
                     Some(Ordering::Equal) => 
@@ -309,32 +319,53 @@ impl MMStruct {
                             new_vma = vma_ptr;
                         }
                         vma_ptr = (*vma_ptr).get_prev();
-                        if (*vma_ptr).vm_end + 1 == (*new_vma).vm_start
+                        if vma_ptr.is_null()
                         {
-                            (*vma_ptr).vm_end = (*vma_ptr).vm_end;
-                            if (*vma_ptr).get_prev() == vma_ptr
-                            {
-                                (*vma_ptr).set_next((*new_vma).get_next());
-                                (*(*new_vma).get_next()).set_prev(vma_ptr);
-                            }
-                            Self::free_vma(new_vma);
-                            new_vma = vma_ptr;
+                            self.mmap = new_vma;
+                            (*new_vma).set_next(vma_ptr);
+                            (*vma_ptr).set_prev(new_vma);
                         }
-                        else {
-                            (*(*vma_ptr).get_next()).set_prev(new_vma);
-                            (*new_vma).set_next((*vma_ptr).get_next());
-                            (*vma_ptr).set_next(new_vma);
-                            (*new_vma).set_prev(vma_ptr);
+                        else
+                        {
+                            if (*vma_ptr).vm_end + 1 == (*new_vma).vm_start && (*vma_ptr).get_file() == (*new_vma).get_file() && (*vma_ptr).get_flags().difference((*new_vma).get_flags()).is_empty() && (*vma_ptr).get_prot() == (*new_vma).get_prot() && (*vma_ptr).get_offset() + ((*vma_ptr).get_end() - (*vma_ptr).get_start() + 1) as Off == (*new_vma).get_offset()
+                            {
+                                // merge two vma
+                                (*vma_ptr).vm_end = (*new_vma).vm_end;
+                                Self::free_vma(new_vma);
+                                new_vma = vma_ptr;
+                            }
+                            else {
+                                (*(*vma_ptr).get_next()).set_prev(new_vma);
+                                (*new_vma).set_next((*vma_ptr).get_next());
+                                (*vma_ptr).set_next(new_vma);
+                                (*new_vma).set_prev(vma_ptr);
+                            }
                         }
                         return new_vma;
                     }
                     Some(Ordering::Less) =>
                     {
+                        last_ptr = vma_ptr;
                         vma_ptr = (*vma_ptr).get_next();
                     }
                     None => panic!("vitrual memory arna overlapped!"),
                 }
             }
+            if (*last_ptr).vm_end + 1 == (*new_vma).vm_start && (*last_ptr).get_file() == (*new_vma).get_file() && (*last_ptr).get_flags().difference((*new_vma).get_flags()).is_empty() && (*last_ptr).get_prot() == (*new_vma).get_prot() && (*last_ptr).get_offset() + ((*last_ptr).get_end() - (*last_ptr).get_start() + 1) as Off == (*new_vma).get_offset()
+            {
+                if (*last_ptr).get_prev() == last_ptr
+                {
+                    (*last_ptr).set_next((*new_vma).get_next());
+                    (*(*new_vma).get_next()).set_prev(last_ptr);
+                }
+                Self::free_vma(new_vma);
+                new_vma = last_ptr;
+            }
+            else {
+                (*last_ptr).set_next(new_vma);
+                (*new_vma).set_prev(last_ptr);
+            }
+            new_vma
         }
     }
 }
@@ -432,7 +463,7 @@ impl VMAreaStruct {
         {
             result |= 0x2;
         }
-        if prot.contains(MmapType::MAP_KERNEL)
+        if !prot.contains(MmapType::PROT_KERNEL)
         {
             result |= 0x4;
         }

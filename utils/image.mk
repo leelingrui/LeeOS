@@ -4,7 +4,7 @@ $(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
 	$(BUILD)/x86_64-unknown-none/debug/lee_os $(BUILD)/system.map \
 	$(BUILTIN_APP)
 # 创建磁盘镜像
-	yes | bximage -q -hd=16 -func=create -sectsize=512 -imgmode=flat $@
+	yes | bximage -q -hd=32 -func=create -sectsize=512 -imgmode=flat $@
 	dd if=$(BUILD)/boot/boot.asm.bin of=$@ bs=512 count=1 conv=notrunc
 	dd if=$(BUILD)/boot/loader.asm.bin of=$@ bs=512 count=4 seek=2 conv=notrunc
 	dd if=$(BUILD)/x86_64-unknown-none/debug/lee_os of=$@ bs=512 seek=10 conv=notrunc
@@ -22,6 +22,10 @@ $(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
 	mkdir -p /mnt/LeeOSDisk/dev
 	mkdir -p /mnt/LeeOSDisk/mnt
 
+	for app in $(BUILTIN_APP); \
+	do \
+		cp $$app /mnt/LeeOSDisk/bin; \
+	done
 
 	sudo umount /mnt/LeeOSDisk
 	sudo losetup -d /dev/loop0
