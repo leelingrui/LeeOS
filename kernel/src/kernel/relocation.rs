@@ -33,6 +33,7 @@ unsafe fn system_relocate64(elf64_shdr : *mut Elf64Shdr)
     }
 }
 
+#[inline(always)]
 unsafe fn RX86_64Relative_Relocate(elf64_rela : *mut Elf64Rela)
 {
     *((*elf64_rela).r_offset as *mut u64) += (*elf64_rela).r_addend | 0xffff8 << 44;
@@ -212,6 +213,22 @@ unsafe fn load_bss(elf64_phdr : *mut Elf64Phdr)
     }
 }
 
+
+pub unsafe fn process_relocation(elf64_ehdr : *mut Elf64Ehdr)
+{
+    let mut shdr;
+    let mut var = 0;
+    shdr = (*elf64_ehdr).e_shoff as *mut Elf64Shdr;
+    while var < (*elf64_ehdr).e_shnum
+    {
+        if (*shdr).sh_type == 4
+        {
+            system_relocate64(shdr);
+        }
+        shdr = shdr.offset(1);
+        var += 1;
+    }
+}
 
 #[no_mangle]
 pub unsafe fn kernel_relocation(elf64_ehdr : *mut Elf64Ehdr)

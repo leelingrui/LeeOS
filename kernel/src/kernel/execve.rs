@@ -1,7 +1,9 @@
+use core::ptr::null_mut;
 use core::{ffi::c_char, alloc::Layout, arch::asm};
 use core::ffi::c_void;
 
 use crate::kernel::process::MAX_PROCSEE_STACK_SIZE;
+use crate::kernel::relocation::process_relocation;
 use crate::mm::mm_type::MmapType;
 use crate::{mm::memory::{self, USER_STACK_TOP}, fs::{namei::{namei, permission, FSPermission}, file::{EOF, FS, sys_write, STDOUT}}, bochs_break, logk};
 
@@ -43,7 +45,7 @@ unsafe fn do_execve(file_name : *const c_char, argv : *mut *mut c_char, envp : *
 
     // load program
     let entry = load_elf64(file_t);
-    // build stack area
+    // build user stack area
     let stack_vma = (*pcb).mm.create_new_mem_area(USER_STACK_TOP.offset(-(MAX_PROCSEE_STACK_SIZE as isize)) as u64, memory::USER_STACK_TOP as u64);
     (*stack_vma).set_prot(MmapType::PROT_READ | MmapType::PROT_WRITE);
 
