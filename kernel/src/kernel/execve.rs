@@ -19,6 +19,8 @@ pub fn sys_execve(filename : *const c_char, argv : *mut *mut c_char, envp : *mut
 
 unsafe fn do_execve(file_name : *const c_char, argv : *mut *mut c_char, envp : *mut *mut c_char) -> i64
 {
+    let pcb = get_current_running_process();
+    let pt_regs = ((*pcb).get_process_kernel_stack() as *mut PtRegs).offset(-1);
     let file_t = namei(file_name);
     if file_t.is_null()
     {
@@ -35,7 +37,6 @@ unsafe fn do_execve(file_name : *const c_char, argv : *mut *mut c_char, envp : *
         return EOF;
     }
     logk!("prepare load elf file\n");
-    let pcb = get_current_running_process();
     compiler_builtins::mem::memcpy((*pcb).name.as_ptr() as *mut u8, file_name as *const u8, PROCESS_NAME_LEN);
     // copy argv env
     // todo!()
@@ -51,7 +52,6 @@ unsafe fn do_execve(file_name : *const c_char, argv : *mut *mut c_char, envp : *
 
     // set heap memory address
 
-    let pt_regs = ((*pcb).get_process_kernel_stack() as *mut PtRegs).offset(-1);
     (*pt_regs).rip = entry as u64;
     (*pt_regs).rbp = USER_STACK_TOP as u64;
     (*pt_regs).rsp = USER_STACK_TOP as u64;

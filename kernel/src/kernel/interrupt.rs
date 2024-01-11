@@ -244,6 +244,7 @@ unsafe fn exception_handler(vector : u32, regs : process::PtRegs)
     printk!("EXCEPTION: {}\n", message);
     printk!("   VECTOR: {}\n", vector);
     printk!("       CS: {}\n", cs);
+    bochs_break!();
 }
 
 fn idt_init()
@@ -261,10 +262,9 @@ fn idt_init()
             set_interrupt_handler(exception_handler as HandlerFn, var as u8);
             var += 1;
         }
-        printk!("IDT: {}", IDT[14]);
         IDT[80].descriptor_init(default_handler as u64, 1 << 3, 0b1110, 3, true);
         IDT_PTR.base = IDT.as_ptr() as u64;
-        IDT_PTR.limit = (IDT_SIZE * 16 - 1) as u16;
+        IDT_PTR.limit = (IDT_SIZE * size_of::<DescriptorT>() - 1) as u16;
         asm!(
             "lidt [{idt_ptr}]",
             idt_ptr = in(reg) &IDT_PTR as *const PointerT as u64

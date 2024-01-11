@@ -22,5 +22,7 @@ pub mod device;
 pub mod buffer;
 pub mod execve;
 pub mod elf64;
+pub mod fork;
 
 pub type Off = usize;
+pub type Err = i64;

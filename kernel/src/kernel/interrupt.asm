@@ -1,5 +1,6 @@
 .globl _syscall_start
 .globl interrupt_exit
+.globl _syscall_end
 
 .macro SAVE_CONTEXT
     sub rsp, 8 * 16
@@ -72,22 +73,37 @@ interrupt_exit:
     iretq
 
 _syscall_start:
-    push r11
-    push rcx
-    push rbx
-    mov rbx, [SYSTEM_CALL_TABLE@GOTPCREL + rip]
-    push r9
-    push r8
-    push r10
-    push rdx
-    push rsi
-    push rdi
-    call [rbx + rax * 8]
-    add rsp, 8 * 6
-    mov [rsp + 8 * 4], rax
-    pop rbx
-    pop rcx
-    pop r11
+    sub rsp, 8 * 16
+    mov [rsp + 15 * 8], rax
+    mov [rsp + 14 * 8], rcx
+    mov [rsp + 13 * 8], rdx
+    mov [rsp + 12 * 8], rbx
+    mov [rsp + 11 * 8], rsi
+    mov [rsp + 10 * 8], rdi
+    mov [rsp + 8 * 8], r8
+    mov [rsp + 7 * 8], r9
+    mov [rsp + 6 * 8], r10
+    mov [rsp + 5 * 8], r11
+    mov [rsp + 4 * 8], r12
+    mov [rsp + 3 * 8], r13
+    mov [rsp + 2 * 8], r14
+    mov [rsp + 1 * 8], r15
+    mov [rsp + 0 * 8], rsp
+    lea rdi, [rsp]
+    call [syscall_function@GOTPCREL + rip]
+_syscall_end:
+    mov rax, [rsp + 15 * 8]
+    mov rcx, [rsp + 14 * 8]
+    mov rbx, [rsp + 12 * 8]
+    mov rbp, [rsp + 9 * 8]
+    mov r11, [rsp + 5 * 8]
+    mov r12, [rsp + 4 * 8]
+    mov r13, [rsp + 3 * 8]
+    mov r14, [rsp + 2 * 8]
+    mov r15, [rsp + 1 * 8]
+    mov rsp, [rsp + 0 * 8]
+    add rsp, 8 * 16
+    xchg bx, bx
     sysretq
 
 INTERRUPT_HANDLER 0x00, 0

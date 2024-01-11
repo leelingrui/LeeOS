@@ -20,7 +20,8 @@ use lee_os::kernel::process::process_init;
 use lee_os::kernel::syscall::syscall_init;
 use lee_os::kernel::fpu::fpu_init;
 use lee_os::mm::memory::init_memory;
-use lee_os::printk;
+use lee_os::{printk, bochs_break};
+use core::arch::asm;
 
 // use kernel::console::Console;
 global_asm!(include_str!("../kernel/entry.asm"));
@@ -29,7 +30,9 @@ global_asm!(include_str!("../kernel/entry.asm"));
 pub fn panic(_info: &PanicInfo) -> !
 {
     printk!("{_info}\n");
-    loop { }
+    loop {
+        
+    }
 }
 
 

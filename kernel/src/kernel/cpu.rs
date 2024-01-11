@@ -1,7 +1,5 @@
 use core::{arch::asm, ffi::c_void};
-use crate::logk;
 
-use super::cpu;
 use bitflags::bitflags;
 pub const SUPPORT_1GB_PAGE : u32 = 1 << 26;
 pub const FPU_ENABLE : u32 = 1 << 0;
@@ -124,4 +122,12 @@ pub fn __cpuid(selector : u32) -> CpuidResult
         );
         result
     }
+}
+
+pub unsafe fn flush_tlb(vaddr : *const c_void)
+{
+    asm!(
+        "invlpg [{bad_page}]",
+        bad_page = in(reg) vaddr
+    )
 }

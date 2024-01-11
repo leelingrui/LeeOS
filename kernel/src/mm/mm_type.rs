@@ -8,8 +8,24 @@ pub struct MMStruct
 {
     pub mmap : *mut VMAreaStruct,
     pub mm_rb : BTreeSet<VMAPtrCmp>,
+    pub stack : *mut VMAreaStruct,
     pub mmap_cache : *mut VMAreaStruct,
     pub pcb_ptr : *mut process::ProcessControlBlock
+}
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy)]
+    pub struct PageFaultErrorCode : u64
+    {
+        const PRESENT = 0x1; // When set, the page fault was caused by a page-protection violation. When not set, it was caused by a non-present page.
+        const WRITE = 0x2; // When set, the page fault was caused by a write access. When not set, it was caused by a read access.
+        const USER = 0x4; // When set, the page fault was caused while CPL = 3. This does not necessarily mean that the page fault was a privilege violation.
+        const RESERVED_WRITE = 0x8; // When set, the page fault was caused while CPL = 3. This does not necessarily mean that the page fault was a privilege violation.
+        const INSTRUCTION_FETCH = 0x10; // When set, the page fault was caused by an instruction fetch. This only applies when the No-Execute bit is supported and enabled.
+        const PROTECTION_KEY = 0x20; // When set, the page fault was caused by a protection-key violation. The PKRU register (for user-mode accesses) or PKRS MSR (for supervisor-mode accesses) specifies the protection key rights.
+        const SHADOW_STACK = 0x40; // When set, the page fault was caused by a shadow stack access.
+        const SOFTWARE_GUARD_EXTENSIONS = 0x4000; //When set, the fault was due to an SGX violation. The fault is unrelated to ordinary paging.
+    }
 }
 
 bitflags::bitflags! {
@@ -238,10 +254,7 @@ impl MMStruct {
 
     pub fn new(pcb_ptr : *mut process::ProcessControlBlock) -> MMStruct
     {
-        unsafe
-        {
-            MMStruct { mmap: null_mut(), mm_rb: BTreeSet::new(), mmap_cache: null_mut(), pcb_ptr }
-        }
+        MMStruct { mmap: null_mut(), mm_rb: BTreeSet::new(), mmap_cache: null_mut(), pcb_ptr, stack: null_mut() }
     }
 
     pub fn dispose(mm_ptr : *mut MMStruct)

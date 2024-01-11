@@ -1,7 +1,7 @@
 use core::{intrinsics::size_of, default::Default, arch::asm, fmt};
 use crate::{printk, kernel::string::memset};
 
-const GDT_SIZE : usize = 8192;
+const GDT_SIZE : usize = 7;
 pub static mut GDT : [DescriptorT; GDT_SIZE] = [DescriptorT(0); GDT_SIZE];
 pub static mut KERNEL_TSS : TaskStateSegment = TaskStateSegment::new();
 #[no_mangle]
@@ -9,9 +9,9 @@ pub static mut GDT_PTR : PointerT = PointerT{ base: 0, limit: 0 };
 use bitfield::bitfield;
 pub const KERNEL_CODE_IDX : usize = 1;
 pub const KERNEL_DATA_IDX : usize = 2;
-pub const TSS_IDX : usize = 3;
-pub const USER_CODE_IDX : usize = 5;
-pub const USER_DATA_IDX : usize = 6;
+pub const USER_DATA_IDX : usize = 3;
+pub const USER_CODE_IDX : usize = 4;
+pub const TSS_IDX : usize = 5;
 #[repr(C)]
 #[derive(Default, Clone)]
 #[repr(packed)]
@@ -150,7 +150,7 @@ pub fn gdt_init()
         descriptor_init(&mut GDT[USER_CODE_IDX], 0x0, 0xfffff, true, true, false, true, true, 3, 0b1010);
         descriptor_init(&mut GDT[USER_DATA_IDX], 0x0, 0xfffff, true, true, false, true, true, 3, 0b0010);
         GDT_PTR.base = GDT.as_ptr() as u64;
-        GDT_PTR.limit = (GDT_SIZE - 1) as u16;
+        GDT_PTR.limit = (GDT_SIZE * size_of::<DescriptorT>() - 1) as u16;
         asm!(
             "lgdt [{gdt_ptr}]",
             gdt_ptr = in(reg) &GDT_PTR as *const PointerT as u64
