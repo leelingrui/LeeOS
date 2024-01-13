@@ -66,7 +66,6 @@ unsafe fn do_execve(file_name : *const c_char, argv : *mut *mut c_char, envp : *
 
 unsafe fn test() -> !
 {
-    bochs_break!();
     static TEST : &str = "test!!!\0";
     sys_write(STDOUT, TEST.as_ptr() as *const c_void, TEST.len());
     loop {

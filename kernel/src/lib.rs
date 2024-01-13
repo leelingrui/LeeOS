@@ -3,6 +3,7 @@
 #![feature(int_roundings)]
 #![feature(const_trait_impl)]
 #![feature(core_intrinsics)]
+#![feature(const_mut_refs)]
 #![feature(alloc_layout_extra)]
 #![feature(allocator_api)]
 #![no_std]

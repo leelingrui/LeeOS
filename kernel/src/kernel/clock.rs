@@ -1,7 +1,7 @@
 use core::arch::asm;
 use crate::{logk, kernel::{sched, process::{self, PtRegs}}};
 
-use super::{io::{self, outb, inb}, interrupt};
+use super::{io::{self, outb, inb}, interrupt::{self, IRQ_CLOCK}};
 
 const OSCILLATOR : u32 = 11932182;
 const SPEAKER_REG : u16 = 0x61;
@@ -13,17 +13,16 @@ const PIT_CHAN2_REG : u16 = 0x42;
 const PIT_CTRL_REG : u16 = 0x43;
 const HZ : u32 = 100;
 const CLOCK_COUNTER : u32 = OSCILLATOR / HZ;
-const IRQ_CLOCK : u8 = 0;
 
 static mut BEEPING : bool = false;
 static mut JIFFIES : u64 = 0;
 
-extern "C" fn clock_handler(vector : u64, mut pt_regs : PtRegs)
+extern "C" fn clock_handler(vector : u64, pt_regs : PtRegs)
 {
     unsafe
     {
         assert!(vector == 0x20);
-        logk!("clock interrupt occured\n");
+        // logk!("clock interrupt occured\n");
         interrupt::send_eoi(vector as u32);
         JIFFIES += 1;
         process::schedule();
@@ -47,7 +46,6 @@ pub fn clock_init()
 {
     pit_init();
     interrupt::regist_irq(clock_handler as interrupt::HandlerFn, IRQ_CLOCK);
-    interrupt::get_interrupt_state();
     interrupt::set_interrupt_mask(IRQ_CLOCK.into(), true);
 }
 

@@ -171,14 +171,14 @@ pub fn syscall_init()
     // cpu::wrmsr(0x175, 0xffff800000090000u64);
     // cpu::wrmsr(0x176, _syscall_start as u64);
     logk!("initialating system call\n");
+    cpu::wrmsr(0xc0000080, 0x501);
     cpu::wrmsr(0xc0000081, (0x8u64 << 32) | (0x10u64 << 48) as u64);
     cpu::wrmsr(0xc0000082, _syscall_start as u64);
-    cpu::wrmsr(0xc0000080, 0x501);
+    cpu::wrmsr(0xc0000084, 0x1 << 9);
     // regist syscall to syscall table
     unsafe {
         SYSTEM_CALL_TABLE[__NR_WRITE] = core::mem::transmute::<*mut(), SyscallrFn>(sys_write as *mut());
         SYSTEM_CALL_TABLE[__NR_SCHED_YIELD] = core::mem::transmute::<*mut(), SyscallrFn>(sys_yield as *mut());
         SYSTEM_CALL_TABLE[__NR_FORK] = core::mem::transmute::<*mut(), SyscallrFn>(sys_fork as *mut());
     }
-
 }

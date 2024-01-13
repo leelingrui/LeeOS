@@ -156,9 +156,9 @@ impl Console
 
     unsafe fn scroll_up(&mut self)
     {
-        if self.screen_size as u64 + (self.row_size as u64) + (self.screen as u64) < self.mem_end as u64
+        if self.screen_size as u64 + (self.row_size as u64) + (self.screen as u64) >= self.mem_end as u64
         {
-            string::memcpy_s((self.mem_base + 0xffff800000000000) as *mut u8, self.screen_size as usize, (self.mem_base + 0xffff800000000000) as *mut u8, self.screen_size as usize);
+            string::memcpy_s((self.mem_base + 0xffff800000000000) as *mut u8, self.screen_size as usize, (self.screen + 0xffff800000000000) as *mut u8, self.screen_size as usize);
             self.pos -= self.screen - self.mem_base as u64;
             self.screen = self.mem_base;
         }
@@ -168,15 +168,15 @@ impl Console
         self.set_screen();
     }
 
-    pub const fn new() ->Console
+    pub const fn new() -> Console
     {
         Console
         {
-            mem_end: MEM_BASE,
+            mem_end: MEM_BASE + (MEM_SIZE / ROW_SIZE) * ROW_SIZE,
             width: WIDTH,
             height: HEIGHT,
             screen: 0,
-            screen_size: 0,
+            screen_size: (WIDTH * HEIGHT * 2) as u64,
             pos: 0,
             x: 0,
             y: 0,
@@ -242,8 +242,11 @@ impl Console
     pub unsafe fn erase_screen(&mut self, mut start_pos : *mut u16, cnt : u32)
     {
         let mut var = 0;
-        *start_pos = self.erase;
-        start_pos = start_pos.offset(1);
+        while var < cnt {
+            *start_pos = self.erase;
+            start_pos = start_pos.offset(1);
+            var += 1;
+        }
     }
 }
 

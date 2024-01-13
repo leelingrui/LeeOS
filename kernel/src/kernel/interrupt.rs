@@ -35,6 +35,21 @@ pub const INTR_XM : u64 = 19;  // SIMD 浮点异常
 pub const INTR_VE : u64 = 20;  // 虚拟化异常
 pub const INTR_CP : u64 = 21;  // 控制保护异常
 
+pub const IRQ_CLOCK : u8 = 0;      // 时钟
+pub const IRQ_KEYBOARD : u8 = 1;   // 键盘
+pub const IRQ_CASCADE : u8 = 2;    // 8259 从片控制器
+pub const IRQ_SERIAL_2 : u8 = 3;   // 串口 2
+pub const IRQ_SERIAL_1 : u8 = 4;   // 串口 1
+pub const IRQ_PARALLEL_2 : u8 = 5; // 并口 2
+pub const IRQ_SB16 : u8 =  5;      // SB16 声卡
+pub const IRQ_FLOPPY : u8 = 6;     // 软盘控制器
+pub const IRQ_PARALLEL_1 : u8 = 7; // 并口 1
+pub const IRQ_RTC : u8 = 8;        // 实时时钟
+pub const IRQ_REDIRECT : u8 = 9;   // 重定向 IRQ2
+pub const IRQ_MOUSE : u8 = 12;     // 鼠标
+pub const IRQ_MATH : u8 = 13;      // 协处理器 x87
+pub const IRQ_HARDDISK : u8 = 14;  // ATA 硬盘第一通道
+pub const IRQ_HARDDISK2 : u8 = 15; // ATA 硬盘第二通道
 
 const FAULT_MESSAGES : [&str; 22] = [
     "#DE Divide Error",
@@ -254,7 +269,7 @@ fn idt_init()
         let mut var = 0;
         while var < SYS_CALL_RESERVED_SIZE
         {
-            IDT[var].descriptor_init(handler_entry_table[var] as u64, 1 << 3, 0b1111, 0, true);
+            IDT[var].descriptor_init(handler_entry_table[var] as u64, 1 << 3, 0b1110, 0, true);
             var += 1;
         }
         var = 0;

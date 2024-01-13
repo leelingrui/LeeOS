@@ -54,6 +54,28 @@ pub const IDE_ALT_STATUS : u16 = 0x0206;
 pub const IDE_CONTROL : u16 = 0x0206;
 pub const IDE_DEVCTRL : u16 = 0x0206;
 
+pub const KEYBOARD_DATA_PORT : u16 = 0x60;
+pub const KEYBOARD_CTRL_PORT : u16 = 0x64;
+pub const CMOS_SECOND : u8 = 0x01;
+pub const CMOS_MINUTE : u8 = 0x02;
+pub const CMOS_HOUR : u8 = 0x4;
+pub const CMOS_WEEKDAY : u8 = 0x6;
+pub const CMOS_DAY : u8 = 0x7;
+pub const CMOS_MONTH : u8 = 0x8;
+pub const CMOS_YEAR : u8 = 0x9;
+pub const CMOS_CENTURY : u8 = 0x32;
+
+
+
+pub const CMOS_A : u8 = 0x0a;
+pub const CMOS_B : u8 = 0x0b;
+pub const CMOS_C : u8 = 0x0c;
+pub const CMOS_D : u8 = 0x0d;
+pub const CMOS_NMI : u8 = 0x80;
+
+pub const CMOS_ADDR_PORT : u16 = 0x70;
+pub const CMOS_DATA_PROT : u16 = 0x71;
+
 pub const IDE_CMD_READ : u8 = 0x20;
 pub const IDE_CMD_WRITE : u8 = 0x30;
 pub const IDE_CMD_IDENTIFY : u8 = 0xec;

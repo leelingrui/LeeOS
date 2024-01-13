@@ -10,6 +10,8 @@ use core::arch::global_asm;
 extern crate alloc;
 use core::panic::PanicInfo;
 
+use lee_os::kernel::keyboard::keyboard_init;
+use lee_os::kernel::time::time_init;
 use lee_os::kernel::{console::console_init, global::gdt_init, interrupt::interrupt_init};
 use lee_os::fs::super_block::super_init;
 use lee_os::kernel::clock::clock_init;
@@ -46,10 +48,8 @@ unsafe fn kernel_init()
     init_memory(0, core::ptr::null());
     ide_init();
     tss_init();
-    fpu_init();
-    syscall_init();
-    super_init();
     clock_init();
+    super_init();
     process_init();
     interrupt::set_interrupt_state(true);
     printk!("end call int");
