@@ -46,11 +46,12 @@ unsafe fn test_fs()
 fn mount_root()
 {
     logk!("mounting root file system...\n");
-    match get_device(65 << 20) {
+    // root disk is first part of first disk
+    match get_device(259 << 20) {
         Some(device) => 
         {
-            let sb = read_super_block(2);
-            unsafe { FS.load_root_super_block(2, sb) };
+            let sb = read_super_block(device.dev);
+            unsafe { FS.load_root_super_block(device.dev, sb) };
         },
         None => panic!("no root file system!\n"),
     }

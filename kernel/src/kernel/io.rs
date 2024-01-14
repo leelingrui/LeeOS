@@ -504,6 +504,10 @@ fn ide_install()
 {
     unsafe
     {
+        regist_device(252, Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(device::ide_disk_ioctl as *mut())), 
+                Some(core::mem::transmute::<*mut(), DeviceReadFn>(ide_pio_sync_read as *mut())), Option::None, None);
+        regist_device(259, Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(device::ide_part_ioctl as *mut())), 
+                Some(core::mem::transmute::<*mut(), DeviceReadFn>(ide_pio_sync_read as *mut())), Option::None, None);
         let mut cidx = 0;
         while cidx < IDE_CTRL_NR {
             let ctrl = &mut CONTROLLERS[cidx];
@@ -516,16 +520,14 @@ fn ide_install()
                     didx += 1;
                     continue;
                 }
-                regist_device(65, Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(device::ide_disk_ioctl as *mut())), 
-                Some(core::mem::transmute::<*mut(), DeviceReadFn>(ide_pio_sync_read as *mut())), Option::None, None);
-                let dev_t = device_install(65, disk as *const IdeDiskT as *mut c_void, CStr::from_ptr(disk.name.as_ptr()),0, 0);
+                let dev_t = device_install(252, disk as *const IdeDiskT as *mut c_void, CStr::from_ptr(disk.name.as_ptr()),0, 0);
                 didx += 1;
                 let mut i = 0;
                 while i < IDE_PART_NR {
                     let part = &disk.parts[i];
                     if part.count != 0
                     {
-                        device_install(65, part as *const IdePart as *mut c_void, CStr::from_ptr(part.name.as_ptr()), dev_t,
+                        device_install(259, part as *const IdePart as *mut c_void, CStr::from_ptr(part.name.as_ptr()), dev_t,
                               0);
                     }
                     i += 1;
