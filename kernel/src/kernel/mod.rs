@@ -25,6 +25,7 @@ pub mod elf64;
 pub mod fork;
 pub mod keyboard;
 pub mod rtc;
+pub mod input;
 
 pub type Off = usize;
 pub type Err = i64;

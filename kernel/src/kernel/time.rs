@@ -92,7 +92,7 @@ impl TM
 }
 
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Time
 {
     pub tick : u64

@@ -1,6 +1,6 @@
 use core::{ffi::{c_void, CStr}, alloc::Layout};
 
-use crate::{logk, kernel::device::{get_device, DeviceType, DevT}, fs::file::FS, printk};
+use crate::{logk, kernel::device::{get_device, DeviceType, DevT, DEV_NULL, self}, fs::file::FS, printk};
 
 use super::{file::early_disk_read, ext4::{Ext4DirEntry, Ext4DirEntry2}};
 
@@ -46,10 +46,15 @@ unsafe fn test_fs()
 fn mount_root()
 {
     logk!("mounting root file system...\n");
-    let device = get_device(2);
-    assert!(device.dev_type != DeviceType::Null);
-    let sb = read_super_block(2);
-    unsafe { FS.load_root_super_block(2, sb) };
+    match get_device(65 << 20) {
+        Some(device) => 
+        {
+            let sb = read_super_block(2);
+            unsafe { FS.load_root_super_block(2, sb) };
+        },
+        None => panic!("no root file system!\n"),
+    }
+
 }
 
 fn read_super_block(dev : DevT) -> *mut c_void

@@ -9,6 +9,7 @@ use core::mem::size_of;
 use core::ptr::null;
 use core::ptr::null_mut;
 
+use alloc::fmt::format;
 use alloc::string::String;
 
 use crate::fs::PART_FS_EXTENDED;
@@ -29,6 +30,7 @@ use super::device::DeviceReadFn;
 use super::device::DeviceWriteFn;
 use super::device::device_install;
 use super::device::ide_part_ioctl;
+use super::device::regist_device;
 use super::interrupt;
 use super::semaphore;
 use super::io;
@@ -56,7 +58,7 @@ pub const IDE_DEVCTRL : u16 = 0x0206;
 
 pub const KEYBOARD_DATA_PORT : u16 = 0x60;
 pub const KEYBOARD_CTRL_PORT : u16 = 0x64;
-pub const CMOS_SECOND : u8 = 0x01;
+pub const CMOS_SECOND : u8 = 0x00;
 pub const CMOS_MINUTE : u8 = 0x02;
 pub const CMOS_HOUR : u8 = 0x4;
 pub const CMOS_WEEKDAY : u8 = 0x6;
@@ -514,18 +516,17 @@ fn ide_install()
                     didx += 1;
                     continue;
                 }
-                let dev_t = device_install(0, super::device::DeviceType::Block, disk as *const IdeDiskT as *mut c_void, 0, 0,
-                Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(device::ide_disk_ioctl as *mut())), 
-                Some(core::mem::transmute::<*mut(), DeviceReadFn>(ide_pio_sync_read as *mut())), Option::None);
+                regist_device(65, Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(device::ide_disk_ioctl as *mut())), 
+                Some(core::mem::transmute::<*mut(), DeviceReadFn>(ide_pio_sync_read as *mut())), Option::None, None);
+                let dev_t = device_install(65, disk as *const IdeDiskT as *mut c_void, CStr::from_ptr(disk.name.as_ptr()),0, 0);
                 didx += 1;
                 let mut i = 0;
                 while i < IDE_PART_NR {
                     let part = &disk.parts[i];
                     if part.count != 0
                     {
-                        device_install(0, device::DeviceType::Block, part as *const IdePart as *mut c_void, dev_t,
-                              0, Some(core::mem::transmute::<*mut(), DeviceIoCtlFn>(ide_part_ioctl as *mut())),
-                               Some(core::mem::transmute::<*mut(), DeviceReadFn>(part_read as *mut())), Option::None);
+                        device_install(65, part as *const IdePart as *mut c_void, CStr::from_ptr(part.name.as_ptr()), dev_t,
+                              0);
                     }
                     i += 1;
                 }

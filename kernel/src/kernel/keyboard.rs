@@ -1,8 +1,8 @@
 use core::{ffi::{c_char, c_void}, ptr::{null, null_mut}};
 
-use crate::{kernel::{interrupt::send_eoi, io::{inb, KEYBOARD_DATA_PORT, outb, KEYBOARD_CTRL_PORT}}, logk, printk};
+use crate::{kernel::{interrupt::send_eoi, io::{inb, KEYBOARD_DATA_PORT, outb, KEYBOARD_CTRL_PORT}, input::{InputEvent, EV_KEY}}, logk, printk};
 
-use super::interrupt::{self, IRQ_KEYBOARD};
+use super::interrupt::{self, IRQ_KEYBOARD, set_interrupt_mask};
 const INV : char = '\0';
 
 static mut KEYBOARD : KeyBoard = KeyBoard::new();
@@ -274,26 +274,24 @@ pub const KEY_RFKILL : u16 = 247;	/* Key that controls all radios */
 
 pub const KEY_MICMUTE : u16 = 248;	/* Mute / unmute the microphone */
 
-pub struct InputEvent
-{
-    pub _type : u16,
-    pub _code : u16,
-    pub _value : u32
-}
-
-impl InputEvent
-{
-    pub fn new(_type : u16, _code : u16, _value : u32) -> Self
-    {
-        Self { _type, _code, _value }
-    }
-}
+static mut KEY_STATUS : [bool; 256] = [false; 256];
 
 pub fn keyboard_init()
 {
     unsafe
     {
         KEYBOARD.scan_code_type = ScanCodeType::ScanCOdeSet2;
+        // outb(KEYBOARD_DATA_PORT, 0xf0);
+        // let mut ack = 0;
+        // while ack != 0xFA
+        // {
+        //     ack = inb(KEYBOARD_DATA_PORT);
+        // }
+        // outb(KEYBOARD_DATA_PORT, 0x02);
+        // while ack != 0xFA
+        // {
+        //     ack = inb(KEYBOARD_DATA_PORT);
+        // }
         SCAN_CODE_SET2.init(&mut KEYBOARD);
     }
 }
@@ -336,6 +334,10 @@ impl<'a> ScanCodeSet2<'a>
     pub fn init(&mut self, keyboard_ref : &'a mut KeyBoard)
     {
         self.keyboard = Some(keyboard_ref);
+        outb(KEYBOARD_CTRL_PORT, 0x60);
+        outb(KEYBOARD_DATA_PORT, 0b00100001);
+        interrupt::regist_irq(keyboard_scan_code_set2_handler as interrupt::HandlerFn, IRQ_KEYBOARD);
+        set_interrupt_mask(IRQ_KEYBOARD as u32, true);
     }
     pub const fn new() -> Self
     {
@@ -485,10 +487,12 @@ unsafe fn keyboard_scan_code_set2_handler(vector : u32)
 {
     assert!(vector == 0x21);
     let scan_code = inb(KEYBOARD_DATA_PORT);
+    let event;
     send_eoi(vector);
     if scan_code == 0xf0
     {
         SCAN_CODE_SET2.break_state = true;
+        return;
     }
     if scan_code == 0xe0
     {
@@ -500,6 +504,25 @@ unsafe fn keyboard_scan_code_set2_handler(vector : u32)
         todo!();
     }
     else {
-        
+        let value;
+        if SCAN_CODE_SET2.break_state
+        {
+            value = 0;
+            KEY_STATUS[SCAN_CODE_SET2.key_map[scan_code as usize] as usize] = false;
+            SCAN_CODE_SET2.break_state = false;
+        }
+        else
+        {
+            if KEY_STATUS[SCAN_CODE_SET2.key_map[scan_code as usize] as usize]
+            {
+                value = 2;
+            }
+            else {
+                KEY_STATUS[SCAN_CODE_SET2.key_map[scan_code as usize] as usize] = true;
+                value = 1;
+            }
+        }
+        event = InputEvent::new(EV_KEY, SCAN_CODE_SET2.key_map[scan_code as usize], value);
+        logk!("{:?}\n", event);
     }
 }

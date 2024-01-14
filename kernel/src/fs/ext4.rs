@@ -152,6 +152,7 @@ fn get_logic_block(logical_part : &mut LogicalPart, inode : *mut Inode, idx : Id
     }
 }
 
+#[inline(always)]
 fn get_data_block_group_idx(logical_part : &LogicalPart, idx : Idx) -> usize
 {
     idx as usize / logical_part.blocks_per_group

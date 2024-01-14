@@ -1,7 +1,7 @@
 use core::{arch::asm, ffi::{c_char, c_void}, ptr::{null_mut, null}, alloc::{GlobalAlloc, Layout}, cmp, cell::OnceCell, mem::size_of};
 
 use alloc::{collections::{BinaryHeap, btree_map, LinkedList}, vec::Vec};
-use crate::{printk, kernel::{global::{set_tss64, KERNEL_TSS}, sched::{self, set_running_process, get_current_running_process}, idle, interrupt::{interrupt_disable, set_interrupt_state}, time::time_init, clock::clock_init, fpu::fpu_init, keyboard::keyboard_init, syscall::syscall_init}, fs::{file::{FileStruct, FS}, namei::Fd, super_block::super_init}, mm::{mm_type::{self, MmapType}, memory::{USER_STACK_TOP, get_cr3_reg, Pml4, set_cr3_reg}}, logk};
+use crate::{printk, kernel::{global::{set_tss64, KERNEL_TSS}, sched::{self, set_running_process, get_current_running_process}, idle, interrupt::{interrupt_disable, set_interrupt_state, self}, time::time_init, clock::clock_init, fpu::fpu_init, keyboard::keyboard_init, syscall::syscall_init}, fs::{file::{FileStruct, FS}, namei::Fd, super_block::super_init}, mm::{mm_type::{self, MmapType}, memory::{USER_STACK_TOP, get_cr3_reg, Pml4, set_cr3_reg}}, logk};
 pub type Priority = u8;
 use crate::mm::memory;
 
@@ -79,6 +79,7 @@ fn init_thread()
     fpu_init();
     keyboard_init();
     syscall_init();
+    interrupt::set_interrupt_state(true);
     loop {
         
     }

@@ -1,12 +1,13 @@
-use core::{ffi::{c_char, c_void}, ptr::null_mut, alloc::Layout};
+use core::{ffi::{c_char, c_void, CStr}, ptr::null_mut, alloc::Layout};
 
-use alloc::alloc::{alloc, dealloc};
+use alloc::{alloc::{alloc, dealloc}, collections::{BTreeMap, LinkedList}, vec::Vec};
 
-use crate::{fs::ext4::Idx, logk};
+use crate::{fs::{ext4::Idx, dev}, logk};
 
-use super::{process::ProcessControlBlock, list::ListHead, io::{IdeDiskT, IdePart}};
+use super::{process::{ProcessControlBlock, Priority}, list::ListHead, io::{IdeDiskT, IdePart}};
 const DEVICE_NR : usize = 0xff;
-static mut DEVICES : [Device; DEVICE_NR] = [Device::empty(); DEVICE_NR];
+static mut DEVICES : BTreeMap<DevT, Vec<Device>> = BTreeMap::<DevT, Vec<Device>>::new();
+static mut DEVICES_DRIVER : BTreeMap<DevT, Driver> = BTreeMap::<DevT, Driver>::new();
 
 pub type DeviceReadFn = fn(dev : *mut c_void, idx : Idx, count : usize, buf : *mut c_void, flags : u32) -> i64;
 pub type DeviceWriteFn = fn(dev : *mut c_void, idx : Idx, count : usize, buf : *mut c_void,  flags : u32) -> i64;
@@ -16,6 +17,26 @@ pub type DevT = u32;
 
 pub const DEV_CMD_SECTOR_START : i64 = 1;
 pub const DEV_CMD_SECTOR_COUNT : i64 = 2;
+pub const DEV_NAME_LEN : usize = 64;
+pub const DEV_NULL : u32 = 0;
+
+#[inline(always)]
+pub fn mkdev(major : DevT, minor : DevT) -> DevT
+{
+    major << 20 | minor
+}
+
+#[inline(always)]
+pub fn major(dev : DevT) -> DevT
+{
+    dev >> 20
+}
+
+#[inline(always)]
+pub fn minor(dev : DevT) -> DevT
+{
+    dev & 0xfffff
+}
 
 pub enum DevReqType
 {
@@ -59,28 +80,43 @@ impl RequestDescriptor {
 
 }
 
-
 #[derive(Clone, Copy)]
-pub struct Device
+struct Driver
 {
-    pub name : [c_char; 16],
-    pub dev_type : DeviceType,
-    pub flags : u32,
-    pub parent : DevT,
-    pub ptr : *mut c_void,
-    pub buf : *mut c_void,
     pub read : Option<DeviceReadFn>,
     pub write : Option<DeviceWriteFn>,
     pub ioctl : Option<DeviceIoCtlFn>,
     pub req_priority : Option<RequestPriorityFn>,
+}
+
+#[derive(Clone, Copy)]
+pub struct Device
+{
+    pub name : [c_char; DEV_NAME_LEN],
+    pub dev : DevT,
+    pub flags : u32,
+    pub parent : DevT,
+    pub ptr : *mut c_void,
     pub request_list : ListHead
 }
 
-pub fn get_device(dev_t : DevT) -> &'static mut Device
+pub fn get_device<'a>(dev_t : DevT) -> Option<&'a mut Device>
 {
     unsafe { 
-        assert!(DEVICES[dev_t as usize].dev_type != DeviceType::Null);
-        &mut DEVICES[dev_t as usize]
+        match DEVICES.get_mut(&major(dev_t)) {
+            Some(dev_list) => 
+            {
+                if dev_list.len() > minor(dev_t) as usize
+                {
+                    Some(&mut dev_list[minor(dev_t) as usize])
+                }
+                else {
+                    None
+                }
+            },
+            None => None,
+        }
+
     }
 }
 
@@ -114,119 +150,161 @@ impl Device {
         }
     }
 
-    const fn empty() -> Self
-    {
-        Self { name: ['n' as i8, 'u' as i8, 'l' as i8, 'l' as i8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dev_type: DeviceType::Null, flags: 0, buf: null_mut(), read:Option::None, write: Option::None, ioctl: Option::None, parent: 0, ptr: null_mut(), request_list: ListHead::empty(), req_priority: Some(default_request_priority as RequestPriorityFn) }
-    }
-
     fn empty_req_list(&self) -> bool
     {
         return self.request_list.next.is_null();
     }
 
-    fn insert_request(&mut self, request : *mut RequestDescriptor)
+    fn insert_request(&mut self, request : *mut RequestDescriptor) -> bool
     {
         unsafe
         {
             let mut req_list = self.request_list.next as *mut RequestDescriptor;
-            if req_list.is_null()
-            {
-                self.request_list.next = request as *mut ListHead;
-            }
-            else
-            {
-                loop {
-                    if (self.req_priority.unwrap())(&*req_list, &*request)
+            match DEVICES_DRIVER.get(&major(self.dev)) {
+                Some(driver) =>
+                {
+                    if req_list.is_null()
                     {
-                        (*(*req_list).get_prev()).set_next(request);
-                        (*req_list).set_prev((*req_list).get_prev());
-                        (*req_list).set_next(req_list);
-                        (*req_list).set_prev(request);
-                        break;
+                        self.request_list.next = request as *mut ListHead;
                     }
-                    let next = (*req_list).get_next();
-                    if next.is_null()
+                    else
                     {
-                        (*req_list).set_next(request);
-                        (*request).set_prev(req_list);
-                        break;
+                        match driver.req_priority {
+                            Some(priority_fn) => 
+                            {
+                                loop {
+                                    if priority_fn(&*req_list, &*request)
+                                    {
+                                        (*(*req_list).get_prev()).set_next(request);
+                                        (*req_list).set_prev((*req_list).get_prev());
+                                        (*req_list).set_next(req_list);
+                                        (*req_list).set_prev(request);
+                                        break;
+                                    }
+                                    let next = (*req_list).get_next();
+                                    if next.is_null()
+                                    {
+                                        (*req_list).set_next(request);
+                                        (*request).set_prev(req_list);
+                                        break;
+                                    }
+                                    else {
+                                        req_list = next;
+                                    }
+                                }
+                            },
+                            None => 
+                            {
+                                loop {
+                                    if default_request_priority(&*req_list, &*request)
+                                    {
+                                        (*(*req_list).get_prev()).set_next(request);
+                                        (*req_list).set_prev((*req_list).get_prev());
+                                        (*req_list).set_next(req_list);
+                                        (*req_list).set_prev(request);
+                                        break;
+                                    }
+                                    let next = (*req_list).get_next();
+                                    if next.is_null()
+                                    {
+                                        (*req_list).set_next(request);
+                                        (*request).set_prev(req_list);
+                                        break;
+                                    }
+                                    else {
+                                        req_list = next;
+                                    }
+                                }
+                            },
+                        }
                     }
-                    else {
-                        req_list = next;
-                    }
+                    true
                 }
+                None => false,
             }
         }
 
     }
 }
 
-fn get_null_device_no() -> usize
+pub fn regist_device(dev_no : DevT, ioctl_fn : Option<DeviceIoCtlFn>, read_fn : Option<DeviceReadFn>, write_fn : Option<DeviceWriteFn>, priority_fn : Option<RequestPriorityFn>)
 {
     unsafe
     {
-        let mut var = 1;
-        while var < DEVICE_NR {
-            if DEVICES[var].dev_type == DeviceType::Null
-            {
-                return var;
-            }
-            var += 1;
-        }
-        return 0;
+        let driver = Driver {
+            read: read_fn,
+            write: write_fn,
+            ioctl: ioctl_fn,
+            req_priority: priority_fn,
+        };
+        DEVICES_DRIVER.insert(dev_no, driver);
     }
-
 }
 
-pub fn device_install(mut dev_no : DevT, dev_type : DeviceType, ptr : *mut c_void, parent : DevT, flags : u32, ioctl_fn : Option<DeviceIoCtlFn>, read_fn : Option<DeviceReadFn>, write_fn : Option<DeviceWriteFn>) -> DevT
+pub fn device_install(dev_no : DevT, ptr : *mut c_void, name : &CStr, parent : DevT, flags : u32) -> DevT
 {
     unsafe
     {
-        if dev_no == 0
-        {
-            dev_no = get_null_device_no() as DevT;
-            if dev_no != 0
+        match DEVICES.get_mut(&dev_no) {
+            Some(target_list) => 
             {
-                DEVICES[dev_no as usize].dev_type = dev_type;
-                DEVICES[dev_no as usize].flags = flags;
-                compiler_builtins::mem::memcpy(DEVICES[dev_no as usize].name.as_mut_ptr() as *mut u8, ptr as *mut u8, 16);
-                DEVICES[dev_no as usize].ioctl = ioctl_fn;
-                DEVICES[dev_no as usize].read = read_fn;
-                DEVICES[dev_no as usize].write = write_fn;
-                DEVICES[dev_no as usize].parent = parent;
-                DEVICES[dev_no as usize].ptr = ptr;
-                return dev_no;
-            }
-        }
-        else {
-            if DEVICES[dev_no as usize].dev_type != DeviceType::Null
+                let minor = target_list.len() as DevT;
+                let device = Device {
+                    name: [0; DEV_NAME_LEN],
+                    dev: mkdev(dev_no, minor),
+                    flags,
+                    parent,
+                    ptr,
+                    request_list: ListHead::empty(),                    
+                };
+                compiler_builtins::mem::memcpy(device.name.as_ptr() as *mut u8, name.as_ptr() as *const u8, name.to_str().unwrap().len());
+                target_list.push(device);
+                mkdev(dev_no, minor)
+
+            },
+            None => 
             {
-                DEVICES[dev_no as usize].dev_type = dev_type;
-                DEVICES[dev_no as usize].flags = flags;
-                compiler_builtins::mem::memcpy(DEVICES[dev_no as usize].name.as_mut_ptr() as *mut u8, ptr as *mut u8, 16);
-                DEVICES[dev_no as usize].ioctl = ioctl_fn;
-                DEVICES[dev_no as usize].read = read_fn;
-                DEVICES[dev_no as usize].write = write_fn;
-                DEVICES[dev_no as usize].parent = parent;
-                DEVICES[dev_no as usize].ptr = ptr;
-                return dev_no;
-            }
+                let mut target_list = Vec::<Device>::new();
+                let minor = target_list.len() as DevT;
+                let device = Device {
+                    name: [0; DEV_NAME_LEN],
+                    dev: mkdev(dev_no, minor),
+                    flags,
+                    parent,
+                    ptr,
+                    request_list: ListHead::empty(),                    
+                };
+                compiler_builtins::mem::memcpy(device.name.as_ptr() as *mut u8, name.as_ptr() as *const u8, name.to_str().unwrap().len());
+                target_list.push(device);
+                DEVICES.insert(dev_no, target_list);
+                mkdev(dev_no, minor)
+            },
         }
-        return 0;
     }
 
 }
 
 pub fn device_ioctl(dev_t : DevT, cmd : i64, args : *mut c_void, flags : u32) -> i64
 {
-    let device = get_device(dev_t);
-    if device.ioctl.is_none()
+    unsafe
     {
-        return -1;
-    }
-    else {
-        unsafe {
-            (device.ioctl.unwrap())(device.ptr, cmd, args, flags)            
+        match get_device(dev_t) {
+            Some(device) =>
+            {
+                match DEVICES_DRIVER.get(&major(dev_t)) {
+                    Some(driver) => {
+                        match driver.ioctl {
+                            Some(ioctl) => 
+                            {
+                                ioctl(device.ptr, cmd, args, flags)
+                            },
+                            None => -1,
+                        }
+                    },
+                    None => -1,
+                }
+            },
+            None => -1
         }
     }
 }
@@ -248,12 +326,31 @@ fn create_request(buffer : *mut c_void, count : usize, dev : u32, offset : usize
 
 fn do_request(request : &mut RequestDescriptor) -> i64
 {
-    match request.req_type {
-        DevReqType::Read => { 
-            let device = get_device(request.dev_idx);
-            (device.read.unwrap())(device.ptr, request.idx as u64, request.count, request.buffer, request.flags)
-        },
-        DevReqType::Write => todo!(),
+    unsafe
+    {
+        match request.req_type {
+            DevReqType::Read => { 
+                match get_device(request.dev_idx) {
+                    Some(device) => 
+                    {
+                        match DEVICES_DRIVER.get(&major(request.dev_idx)) {
+                            Some(driver) =>
+                            {
+                                match driver.read {
+                                    Some(read_fn) => read_fn(device.ptr, request.idx as u64, request.count, request.buffer, request.flags),
+                                    None => -1,
+                                }
+                                
+                            },
+                            None => -1,
+                        }
+
+                    },
+                    None => -1,
+                }
+            },
+            DevReqType::Write => todo!(),
+        }
     }
 }
 
@@ -285,37 +382,41 @@ pub fn ide_disk_ioctl(disk : *mut IdeDiskT, cmd : i64, _args : *mut c_void,_flag
 
 pub fn device_request(mut dev : DevT, buffer : *mut c_void, count : usize, idx : Idx, _flags : u32,_req_typee : DevReqType) -> i64
 {
-    let mut device = get_device(dev);
-    assert!(device.dev_type == DeviceType::Block);
-    let offset = (device_ioctl(dev, DEV_CMD_SECTOR_START, null_mut(), 0) as usize) + idx as usize;
-    if device.parent != 0
-    {
-        dev = device.parent;
-        device = get_device(device.parent);
+    match get_device(dev) {
+        Some(mut device) => 
+        {
+            let offset = (device_ioctl(dev, DEV_CMD_SECTOR_START, null_mut(), 0) as usize) + idx as usize;
+            if device.parent != 0
+            {
+                dev = device.parent;
+                device = get_device(device.parent).unwrap();
+            }
+            let request = create_request(buffer, count, dev, offset);
+            logk!("dev {}, request idx {}\n", dev, offset);
+            let empty = device.empty_req_list();
+            device.insert_request(request);
+            if !empty
+            {
+                todo!()
+            }
+            let result;
+            unsafe {
+                result = do_request(&mut *request);
+            }
+            device.erase_request(request);
+            let next_request = device.get_next_request();
+            if !next_request.is_null()
+            {
+                todo!()
+            }
+            unsafe
+            {
+                dealloc(request as *mut u8, Layout::new::<RequestDescriptor>());
+            }
+            result
+        },
+        None => -1,
     }
-    let request = create_request(buffer, count, dev, offset);
-    logk!("dev {}, request idx {}\n", dev, offset);
-    let empty = device.empty_req_list();
-    device.insert_request(request);
-    if !empty
-    {
-        todo!()
-    }
-    let result;
-    unsafe {
-        result = do_request(&mut *request);
-    }
-    device.erase_request(request);
-    let next_request = device.get_next_request();
-    if !next_request.is_null()
-    {
-        todo!()
-    }
-    unsafe
-    {
-        dealloc(request as *mut u8, Layout::new::<RequestDescriptor>());
-    }
-    result
 }
 
 #[derive(Clone, Copy, PartialEq)]
