@@ -1,43 +1,35 @@
 use core::{ffi::{c_char, c_void}, ptr::null_mut, iter::empty};
-use bitflags::bitflags;
 use crate::kernel::{sched::get_current_running_process, string::{is_separator, strrsep}};
-use super::{file::{Inode, FS, DirEntry, FSType, FileStruct, FileFlag}, ext4::ext4_permission_check};
+use super::file::{DirEntry, FSPermission, FSType, FileFlag, FileStruct, Inode, FS};
 pub type Fd = usize;
 
-
-bitflags!
-{
-    pub struct FSPermission : u16
-    {
-        const IRWXU = 0o700;// 宿主可以读、写、执行/搜索
-        const IRUSR = 0o400;// 宿主读许可
-        const IWUSR = 0o200;// 宿主写许可
-        const IXUSR = 0o100;// 宿主执行/搜索许可
-        const IRWXG = 0o070; // 组成员可以读、写、执行/搜索
-        const IRGRP = 0o040; // 组成员读许可
-        const IWGRP = 0o020; // 组成员写许可
-        const IXGRP = 0o010; // 组成员执行/搜索许可
-        const IRWXO = 0o007; // 其他人读、写、执行/搜索许可
-        const IROTH = 0o004; // 其他人读许可
-        const IWOTH = 0o002; // 其他人写许可
-        const IXOTH = 0o001; // 其他人执行/搜索许可
-        const EXEC = Self::IXOTH.bits();
-        const READ = Self::IROTH.bits();
-        const WRITE = Self::IWOTH.bits();
-    }
-
-}
 
 pub fn permission(inode : *mut Inode, perm : FSPermission) -> bool
 {
     unsafe
     {
-        match (*(*inode).logical_part_ptr).fs_type {
-            FSType::None => panic!("unsupport fs type!\n"),
-            FSType::Ext4 => ext4_permission_check(inode, perm),
+        let process = get_current_running_process();
+        let mut mode = (*inode).i_mode.bits();
+        if (*process).uid == 0
+        {
+            return true;
+        }
+        if (*process).uid == (*inode).i_uid as u32
+        {
+            mode >>= 6;
+        }
+        else if (*process).gid == (*inode).i_gid as u32 {
+            mode >>= 3;
+        }
+        if (mode & perm.bits() & 0b111) == perm.bits()
+        {
+            true
+        }
+        else 
+        {
+            false
         }
     }
-
 }
 
 pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut FileStruct

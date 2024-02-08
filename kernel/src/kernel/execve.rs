@@ -2,10 +2,11 @@ use core::ptr::null_mut;
 use core::{ffi::c_char, alloc::Layout, arch::asm};
 use core::ffi::c_void;
 
+use crate::fs::file::FSPermission;
 use crate::kernel::process::MAX_PROCSEE_STACK_SIZE;
 use crate::kernel::relocation::process_relocation;
 use crate::mm::mm_type::MmapType;
-use crate::{mm::memory::{self, USER_STACK_TOP}, fs::{namei::{namei, permission, FSPermission}, file::{EOF, FS, sys_write, STDOUT}}, bochs_break, logk};
+use crate::{mm::memory::{self, USER_STACK_TOP}, fs::{namei::{namei, permission}, file::{EOF, FS, sys_write, STDOUT}}, bochs_break, logk};
 
 use super::{process::{PtRegs, interrupt_exit, PROCESS_NAME_LEN}, sched::get_current_running_process, elf64::load_elf64, syscall};
 

@@ -9,6 +9,8 @@ use super::{execve, global::{USER_DATA_IDX, USER_CODE_IDX}};
 pub type PCB = ProcessControlBlock;
 const MAX_PROGRESS_NUM : Pid = 65536;
 pub const MAX_PROCSEE_STACK_SIZE : usize = 0x4000000;
+pub type Uid = u32;
+pub type Gid = u32;
 static mut TASK_TABLE : [*mut PCB ;MAX_PROGRESS_NUM as usize] = [null_mut(); MAX_PROGRESS_NUM as usize];
 static mut WAIT_MAP : btree_map::BTreeMap<Priority, LinkedList<*mut PCB>> = btree_map::BTreeMap::new();
 static mut IDLE : *mut PCB = null_mut();
@@ -79,10 +81,6 @@ fn init_thread()
     fpu_init();
     keyboard_init();
     syscall_init();
-    interrupt::set_interrupt_state(true);
-    loop {
-        
-    }
     task_to_user_mode();
 }
 
@@ -102,8 +100,8 @@ pub struct ProcessControlBlock
     pub jiffies : u32,
     pub name : [c_char; PROCESS_NAME_LEN],
     pub files : Vec<*mut FileStruct>,
-    pub uid : u32, // user id
-    pub gid : u32, // user group id
+    pub uid : Uid, // user id
+    pub gid : Gid, // user group id
     pub pid : Pid, 
     pub ppid : Pid, // parent process id
     pub pgid : Pid, // process grop id

@@ -1,8 +1,8 @@
-use core::{ffi::{c_char, c_void}, cmp::min, ptr::null_mut, alloc::Layout};
+use core::{alloc::Layout, cmp::min, ffi::{c_char, c_void}, ptr::null_mut, sync::atomic::AtomicI64};
 
 use crate::{fs::file::{EOF, FS, FSType}, kernel::{buffer::{Buffer, self}, string::{EOS, is_separator}, sched::get_current_running_process}, mm::memory::PAGE_SIZE};
 
-use super::{file::{LogicalPart, Inode, DirEntry}, namei::FSPermission};
+use super::file::{DirEntry, FSPermission, Inode, LogicalPart};
 
 
 
@@ -23,36 +23,6 @@ const EXT4_DIRECT_BLOCK : u64 = 12;
 const EXT4_INDIRECT1_BLOCK : u64 = 12 + 1024;
 const EXT4_INDIRECT2_BLOCK : u64 = 12 + 1024 * 1024;
 const EXT4_INDIRECT3_BLOCK : u64 = 12 + 1024 * 1024 * 1024;
-
-pub fn ext4_permission_check(inode : *mut Inode, perm : FSPermission) -> bool
-{
-    unsafe
-    {
-        let desc = (*inode).inode_desc_ptr as *const Ext4Inode;
-        let process = get_current_running_process();
-        let mut mode = (*desc).i_mode;
-        if (*process).uid == 0
-        {
-            return true;
-        }
-        if (*process).uid == (*desc).i_uid as u32
-        {
-            mode >>= 6;
-        }
-        else if (*process).gid == (*desc).i_gid as u32 {
-            mode >>= 3;
-        }
-        if (mode & perm.bits() & 0b111) == perm.bits()
-        {
-            true
-        }
-        else 
-        {
-            false
-        }
-    }
-
-}
 
 
 pub fn ext4_match_name(name : *const c_char, entry_name : *const c_char, next : &mut *mut c_char) -> bool
@@ -273,60 +243,67 @@ pub fn ext4_inode_read(logical_part : &mut LogicalPart, inode : *mut Inode, mut 
     }
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_file(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFREG.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_dir(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFDIR.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_chr(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFCHR.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_blk(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFBLK.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_fifo(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFIFO.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_lnk(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFLNK.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_sock(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFSOCK.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_reg(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFREG.bits()
 }
 
-
-#[inline]
-pub fn ext4_inode_format(inode : *mut Inode, buffer : *mut Buffer, logic_block_size : i32, nr : Idx)
+#[inline(always)]
+pub fn ext4_inode_desc_get(logical_part : &mut LogicalPart, inode : *mut Inode, logic_block_size : i32, nr : Idx)
 {
     unsafe {
+        let block_no = logical_part.get_inode_logical_block(nr) as usize;
+        let buffer = logical_part.read_block(block_no as usize);
+        (*inode).inode_block_buffer = buffer;
         (*inode).inode_desc_ptr = (*buffer).buffer.offset((256 * (nr - 1) % (1024 * logic_block_size as u64)).try_into().unwrap());
+        let desc = (*buffer).buffer.offset((256 * (nr - 1) % (1024 * logic_block_size as u64)).try_into().unwrap()) as *const Ext4Inode;
+        (*inode).i_mode = FSPermission::from_bits((*desc).i_mode).unwrap();
+        (*inode).i_uid = (*desc).i_uid as u32;
+        (*inode).i_gid = (*desc).i_gid as u32;
+        (*inode).i_nlink = AtomicI64::new((*desc).i_links_count as i64);
     }
 }
 
@@ -449,7 +426,7 @@ pub struct Ext4Inode
     pub i_mtime : i32,
     pub i_dtime : i32,
     pub i_gid : i16,
-    pub i_links_coint : i16,
+    pub i_links_count : i16,
     pub i_blocks_lo : i32,
     pub i_flags : i32,
     pub osd1 : Osd1,

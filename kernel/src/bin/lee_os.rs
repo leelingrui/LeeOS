@@ -22,6 +22,7 @@ use lee_os::kernel::process::process_init;
 use lee_os::kernel::syscall::syscall_init;
 use lee_os::kernel::fpu::fpu_init;
 use lee_os::mm::memory::init_memory;
+use lee_os::mm::shmem::init_shmem;
 use lee_os::{printk, bochs_break};
 use core::arch::asm;
 
@@ -46,6 +47,7 @@ unsafe fn kernel_init()
     gdt_init();
     interrupt_init();
     init_memory(0, core::ptr::null());
+    init_shmem();
     ide_init();
     tss_init();
     clock_init();

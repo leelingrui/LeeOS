@@ -409,17 +409,26 @@ impl MemoryPool {
         let memory_pool = MemoryPool{ mem_map : null_mut(), lowest_idx : 0, free_pages : 0, frame_allocator: null_mut() }; // kernel_vmem_pool: BuddySystem { bucket: [MemorySpan::new(); MAX_ORDER], lock: semaphore::SpinLock::new(1), current_vmemory: null_mut() } 
         memory_pool
     }
+
+    pub fn total_pages() -> usize
+    {
+        unsafe
+        {
+            MEMORY_DESCRIPTOR.all_pages
+        }
+    }
+
     fn init(&mut self, memory_descriptor : &mut MemoryDescriptor)
     {
         assert!(size_of::<slub::Slab>() == size_of::<page::Page>(), "all page descriptor must have same length");
         unsafe {
             // self.page_map.reset_bitmap(memory_descriptor.start.offset((get_kernel_size() + KERNEL_START) as isize) as *mut u8, MEMORY_DESCRIPTOR.all_pages);
             self.mem_map = (relocation::KERNEL_SIZE) as *mut page::Page;
-            self.free_pages = MEMORY_DESCRIPTOR.all_pages;
-            let mut pml4_position = relocation::KERNEL_SIZE + MEMORY_DESCRIPTOR.all_pages * size_of::<page::Page>(); // calculate PDPTE virtual position
+            self.free_pages = memory_descriptor.all_pages;
+            let mut pml4_position = relocation::KERNEL_SIZE + memory_descriptor.all_pages * size_of::<page::Page>(); // calculate PDPTE virtual position
             pml4_position = ((pml4_position / PAGE_SIZE) + ((pml4_position % PAGE_SIZE) != 0) as usize) * PAGE_SIZE;
             let used_page = (pml4_position - 0xffff800000100000) / PAGE_SIZE + 1;
-            compiler_builtins::mem::memset(self.mem_map as *mut u8, 0, size_of::<page::Page>() * MEMORY_DESCRIPTOR.all_pages);
+            compiler_builtins::mem::memset(self.mem_map as *mut u8, 0, size_of::<page::Page>() * memory_descriptor.all_pages);
             self.free_pages -= used_page;
             self.lowest_idx += used_page;
             self.init_pml4(pml4_position as *mut Pml4, pml4_position - KERNEL_START + 0x100000 + PAGE_SIZE, (KERNEL_START - 0x100000) as *mut c_void, 0x0 as *mut c_void);

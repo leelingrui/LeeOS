@@ -2,9 +2,9 @@ use core::{ffi::{c_char, c_void, CStr}, alloc::Layout, ptr::null_mut, mem::size_
 
 use alloc::{vec::Vec, collections::BTreeMap};
 
-use crate::{kernel::{console::CONSOLE, device::DevT, process::PCB, bitmap::BitMap, math::{pow, self}, buffer::Buffer, semaphore::RWLock, list::ListHead, sched::get_current_running_process, Off}, mm::memory::PAGE_SIZE, fs::ext4::{ext4_get_logic_block_idx, ext4_inode_format}, printk};
+use crate::{fs::ext4::{ext4_get_logic_block_idx, ext4_inode_desc_get}, kernel::{bitmap::BitMap, buffer::Buffer, console::CONSOLE, device::DevT, list::ListHead, math::{self, pow}, process::{Gid, Uid, PCB}, sched::get_current_running_process, semaphore::RWLock, Off}, mm::memory::PAGE_SIZE, printk};
 
-use super::{ext4::{Idx, Ext4SuperBlock, Ext4GroupDesc, ext4_inode_read, Ext4Inode, ext4_find_entry, ext4_match_name, Ext4DirEntry2, self, ext4_inode_block_read}, namei::FSPermission};
+use super::ext4::{Idx, Ext4SuperBlock, Ext4GroupDesc, ext4_inode_read, Ext4Inode, ext4_find_entry, ext4_match_name, Ext4DirEntry2, self, ext4_inode_block_read};
 pub static mut FS : FileSystem = FileSystem::new();
 
 pub struct FileSystem
@@ -13,6 +13,28 @@ pub struct FileSystem
     iroot : *mut FileStruct,
     imount : *mut FileStruct,
     root_dev : DevT
+}
+
+bitflags::bitflags!
+{
+    pub struct FSPermission : u16
+    {
+        const IRWXU = 0o700;// 宿主可以读、写、执行/搜索
+        const IRUSR = 0o400;// 宿主读许可
+        const IWUSR = 0o200;// 宿主写许可
+        const IXUSR = 0o100;// 宿主执行/搜索许可
+        const IRWXG = 0o070; // 组成员可以读、写、执行/搜索
+        const IRGRP = 0o040; // 组成员读许可
+        const IWGRP = 0o020; // 组成员写许可
+        const IXGRP = 0o010; // 组成员执行/搜索许可
+        const IRWXO = 0o007; // 其他人读、写、执行/搜索许可
+        const IROTH = 0o004; // 其他人读许可
+        const IWOTH = 0o002; // 其他人写许可
+        const IXOTH = 0o001; // 其他人执行/搜索许可
+        const EXEC = Self::IXOTH.bits();
+        const READ = Self::IROTH.bits();
+        const WRITE = Self::IWOTH.bits();
+    }
 }
 
 bitflags::bitflags!
@@ -258,7 +280,8 @@ pub struct LogicalPart
 #[derive(PartialEq)]
 pub enum FSType {
     None,
-    Ext4
+    Ext4,
+    Shmem
 }
 
 pub struct Inode
@@ -267,14 +290,28 @@ pub struct Inode
     pub inode_desc_ptr : *mut c_void,
     pub logical_part_ptr : *mut LogicalPart,
     pub count : u32,
+    pub i_uid : Uid,
+    pub i_gid : Gid,
+    pub i_nlink : AtomicI64,
     pub rx_waiter : *mut PCB,
     pub tx_waiter : *mut PCB,
+    pub i_mode : FSPermission,
     pub mount : DevT,
     pub dev : DevT,
     pub nr : Idx,
 }
 
 impl Inode {
+    pub fn new() -> Self
+    {
+        Self { inode_block_buffer: null_mut(), inode_desc_ptr: null_mut(), logical_part_ptr: null_mut(), count: 1, rx_waiter: null_mut(), tx_waiter: null_mut(), mount: 0, dev: 0, nr: 0, i_mode: FSPermission::empty(), i_uid: 0, i_gid: 0, i_nlink: AtomicI64::new(0) }
+    }
+
+    pub fn inc_nlink(&mut self)
+    {
+        self.i_nlink.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn is_dir(&self) -> bool
     {
         unsafe
@@ -282,6 +319,7 @@ impl Inode {
             match (*self.logical_part_ptr).fs_type {
                 FSType::None => panic!("unsupport fs\n"),
                 FSType::Ext4 => ext4::is_dir((*(self.inode_desc_ptr as *mut Ext4Inode)).i_mode),
+                FSType::Shmem => unimplemented!()
             }
         }
     }
@@ -293,6 +331,7 @@ impl Inode {
             match (*self.logical_part_ptr).fs_type {
                 FSType::None => panic!("unsupport fs\n"),
                 FSType::Ext4 => ext4::is_file((*(self.inode_desc_ptr as *mut Ext4Inode)).i_mode),
+                FSType::Shmem => unimplemented!()
             }
         }
     }
@@ -304,6 +343,7 @@ impl Inode {
             match (*self.logical_part_ptr).fs_type {
                 FSType::None => panic!("unsupport fs\n"),
                 FSType::Ext4 => (*(self.inode_desc_ptr as *mut Ext4Inode)).i_size_lo as usize + (((*(self.inode_desc_ptr as *mut Ext4Inode)).i_size_high as usize) << 32),
+                FSType::Shmem => unimplemented!()
             }
         }
     }
@@ -315,6 +355,7 @@ impl Inode {
             match (*self.logical_part_ptr).fs_type {
                 FSType::None => panic!("unsupport fs\n"),
                 FSType::Ext4 => ext4_find_entry(self, name, next, result_entry),
+                FSType::Shmem => unimplemented!()
             }
         }
     }
@@ -341,6 +382,7 @@ impl DirEntry {
                 FSType::Ext4 => {
                     printk!("entery file name :{}\n", CStr::from_ptr((*(self.entry_ptr as *const Ext4DirEntry2)).name.as_ptr()).to_str().unwrap())
                 },
+                FSType::Shmem => unimplemented!()
             }
         }
     }
@@ -354,6 +396,7 @@ impl DirEntry {
                 FSType::Ext4 => {
                     self.entry_ptr = self.entry_ptr.offset((*(self.entry_ptr as *mut Ext4DirEntry2)).rec_len as isize)
                 },
+                FSType::Shmem => unimplemented!()
             }
         }
     }
@@ -367,6 +410,7 @@ impl DirEntry {
                 FSType::Ext4 => {
                     (*(self.entry_ptr as *mut Ext4DirEntry2)).name_len as usize
                 },
+                FSType::Shmem => unimplemented!()
             }
         }
     }
@@ -380,6 +424,7 @@ impl DirEntry {
                 FSType::Ext4 => {
                     alloc::alloc::dealloc(self.entry_ptr as *mut u8, Layout::new::<Ext4DirEntry2>());
                 },
+                FSType::Shmem => unimplemented!()
             }
         }
     }
@@ -401,6 +446,7 @@ impl DirEntry {
             match self.dir_entry_type {
                 FSType::None => panic!("unsupport fs\n"),
                 FSType::Ext4 => (*(self.entry_ptr as *const Ext4DirEntry2)).inode as Idx,
+                FSType::Shmem => unimplemented!()
             }
         }
     }
@@ -411,6 +457,7 @@ impl DirEntry {
             match self.dir_entry_type {
                 FSType::None => panic!("unsupport fs\n"),
                 FSType::Ext4 => (*(self.entry_ptr as *const Ext4DirEntry2)).rec_len as usize,
+                FSType::Shmem => unimplemented!()
             }
         }
     }
@@ -422,6 +469,7 @@ impl DirEntry {
             match self.dir_entry_type {
                 FSType::None => panic!("unsupport fs\n"),
                 FSType::Ext4 => ext4_match_name(name, (*(self.entry_ptr as *const Ext4DirEntry2)).name.as_ptr(), next),
+                FSType::Shmem => unimplemented!()
             }
         }
 
@@ -536,7 +584,7 @@ impl LogicalPart {
         }
     }
 
-    fn new() -> Self
+    pub fn new() -> Self
     {
         Self { fs_type: FSType::None, super_block: null_mut(), group_desc: Vec::new(), logic_block_size: 0, logic_block_count: 0, inode_count: 0, dev: 0, file_map: BTreeMap::new(), inode_per_group: 0, data_map: BTreeMap::new(), blocks_per_group: 0 }
     }
@@ -582,8 +630,9 @@ impl LogicalPart {
     {
         1024 * self.inode_per_group as Idx / 256
     }
+
     #[inline(always)]
-    fn get_inode_logical_block(&self, mut nr : Idx) -> Idx
+    pub fn get_inode_logical_block(&self, mut nr : Idx) -> Idx
     {
         nr = nr / self.inode_per_blocks() + 1;
         let sb = self.super_block as *mut Ext4SuperBlock;
@@ -598,20 +647,16 @@ impl LogicalPart {
         unsafe
         {
             assert!(inode_idx <= self.inode_count as Idx);
-            let mut inode = alloc::alloc::alloc(Layout::new::<Inode>()) as *mut Inode;
-            inode = self.get_free_inode();
+            let inode = self.get_free_inode();
             (*inode).dev = self.dev;
             (*inode).nr = inode_idx;
             (*inode).count += 1;
-            let block_no = self.get_inode_logical_block(inode_idx);
-            let buffer = self.read_block(block_no as usize);
-            (*inode).inode_block_buffer = buffer;
             (*inode).logical_part_ptr = self;
             match self.fs_type
             {
                 FSType::Ext4 =>
                 {
-                    ext4_inode_format(inode, buffer, self.logic_block_size, inode_idx);
+                    ext4_inode_desc_get(self, inode, self.logic_block_size, inode_idx)
                 }
                 _ => panic!("unsupport fs\n")
             }
