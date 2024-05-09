@@ -315,7 +315,7 @@ fn ide_select_drive(disk : &IdeDiskT)
         (*disk.ctrl).active = disk
     }
 }
-#[inline]
+#[inline(always)]
 fn ide_busy_wait(ctrl : *mut IdeCtrlT, mask : u8)
 {
     unsafe

@@ -5,7 +5,6 @@ use alloc::{alloc::{alloc, dealloc}, collections::{BTreeMap, LinkedList}, vec::V
 use crate::{fs::{ext4::Idx, dev}, logk};
 
 use super::{process::{ProcessControlBlock, Priority}, list::ListHead, io::{IdeDiskT, IdePart}};
-const DEVICE_NR : usize = 0xff;
 static mut DEVICES : BTreeMap<DevT, Vec<Device>> = BTreeMap::<DevT, Vec<Device>>::new();
 static mut DEVICES_DRIVER : BTreeMap<DevT, Driver> = BTreeMap::<DevT, Driver>::new();
 
@@ -309,7 +308,7 @@ pub fn device_ioctl(dev_t : DevT, cmd : i64, args : *mut c_void, flags : u32) ->
     }
 }
 
-#[inline]
+#[inline(always)]
 fn create_request(buffer : *mut c_void, count : usize, dev : u32, offset : usize) -> *mut RequestDescriptor
 {
     unsafe
@@ -367,7 +366,7 @@ pub fn ide_part_ioctl(part : *mut IdePart, cmd : i64, _args : *mut c_void,_flags
 
 }
 
-pub fn ide_disk_ioctl(disk : *mut IdeDiskT, cmd : i64, _args : *mut c_void,_flagss : u32) -> i64
+pub fn ide_disk_ioctl(disk : *mut IdeDiskT, cmd : i64, _args : *mut c_void, _flags : u32) -> i64
 {
     unsafe
     {
