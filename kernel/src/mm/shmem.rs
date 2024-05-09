@@ -6,9 +6,10 @@ use alloc::alloc::alloc;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 
+use crate::fs::dcache::DEntryOperations;
 use crate::fs::file::{DirEntry, FSPermission};
 use crate::kernel::time;
-use crate::{fs::file::{Inode, LogicalPart}, kernel::{errno_base::ENOSPC, list::ListHead, process::{Gid, Uid}, semaphore::SpinLock, time::Time, Off}};
+use crate::{fs::file::LogicalPart, kernel::{errno_base::ENOSPC, list::ListHead, process::{Gid, Uid}, semaphore::SpinLock, time::Time, Off}};
 
 use super::{memory::MemoryPool, page::Pageflags, slub::{KMallocInfoStruct, KmemCache}};
 
@@ -17,6 +18,19 @@ const BOGO_INODE_SIZE : i64 = 1024;
 const VM_NORESERV : u32 = 0x00200000;
 const F_SEAL_SEAL : u32 = 1;
 static mut SHMEM_INODE_CACHEP : *mut KmemCache = null_mut();
+pub const SHMEM_DIR_OPERATION : DEntryOperations = DEntryOperations
+{
+    d_revalidate: None,
+    d_weak_revalidate: None,
+    d_hash: None,
+    d_compare: None,
+    d_delete: None,
+    d_init: None,
+    d_release: None,
+    d_prune: None,
+    d_iput: None,
+    d_dname: None,
+};
 type Ino = u64;
 
 pub struct ShmemQuotaLimits {
@@ -33,7 +47,7 @@ impl ShmemQuotaLimits {
     }
 }
 
-pub struct  ShmemSbInfo
+pub struct ShmemSbInfo
 {
     max_blocks : usize,
     used_blocks : i64,
@@ -94,6 +108,7 @@ impl InodeInternalInfo
         }
     }
 }
+
 
 pub struct ShmemInodeInfo
 {

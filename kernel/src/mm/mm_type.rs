@@ -1,6 +1,6 @@
 use core::{sync::atomic::AtomicI64, ptr::null_mut, cmp::Ordering, alloc::{GlobalAlloc, Layout}, ffi::c_void};
 use alloc::collections::BTreeSet;
-use crate::{kernel::{list::ListHead, process, Off}, mm::memory::{MMAP_START, USER_STACK_BOTTOM}, fs::{namei::Fd, file::{FileStruct, FS}}};
+use crate::{kernel::{list::ListHead, process, Off}, mm::memory::{MMAP_START, USER_STACK_BOTTOM}, fs::{namei::Fd, file::{File, FS}}};
 
 use super::{page::Pageflags, memory::MEMORY_POOL};
 
@@ -178,7 +178,7 @@ pub struct VMAreaStruct
     vm_mm : *mut MMStruct,
     vm_flags : MmapType,
     vm_ref_count : AtomicI64,
-    file : *mut FileStruct,
+    file : *mut File,
     offset : Off,
     vm_page_prot : u64
 }
@@ -483,16 +483,12 @@ impl VMAreaStruct {
         result
     }
 
-    pub fn set_file(&mut self, file_t : *mut FileStruct)
+    pub fn set_file(&mut self, file_t : *mut File)
     {
-        unsafe {
-            FS.release_file(self.file);
-            (*file_t).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            self.file = file_t;            
-        }
+        self.file = file_t;            
     }
 
-    pub fn get_file(&self) -> *mut FileStruct
+    pub fn get_file(&self) -> *mut File
     {
         self.file
     }

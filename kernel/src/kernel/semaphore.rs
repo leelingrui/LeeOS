@@ -52,7 +52,7 @@ impl RWLock {
     pub fn wrlock(&mut self)
     {
         self.writer_mutex.acquire(1);
-        loop  {
+        loop {
             self.change_mutex.acquire(1);
             if self.reader_num == 0
             {

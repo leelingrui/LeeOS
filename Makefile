@@ -7,7 +7,8 @@ KERNEL_FILES:=$(KERNEL_SRC)/lib.rs $(KERNEL_SRC)/kernel/console.rs $(KERNEL_SRC)
 	$(KERNEL_SRC)/kernel/cpu.rs $(KERNEL_SRC)/kernel/bitops.rs $(KERNEL_SRC)/kernel/syscall.rs $(KERNEL_SRC)/fs/namei.rs $(KERNEL_SRC)/kernel/elf64.rs\
 	$(KERNEL_SRC)/fs/file.rs $(KERNEL_SRC)/fs/mod.rs $(KERNEL_SRC)/mm/mm_type.rs $(KERNEL_SRC)/kernel/sched.rs $(KERNEL_SRC)/fs/ntfs.rs $(KERNEL_SRC)/kernel/time.rs \
 	$(KERNEL_SRC)/fs/ext4.rs $(KERNEL_SRC)/fs/super_block.rs $(KERNEL_SRC)/kernel/device.rs $(KERNEL_SRC)/kernel/buffer.rs $(KERNEL_SRC)/kernel/execve.rs $(KERNEL_SRC)/kernel/fork.rs \
-	$(KERNEL_SRC)/kernel/keyboard.rs $(KERNEL_SRC)/kernel/rtc.rs $(KERNEL_SRC)/kernel/input.rs $(KERNEL_SRC)/mm/shmem.rs $(KERNEL_SRC)/kernel/errno_base.rs
+	$(KERNEL_SRC)/kernel/keyboard.rs $(KERNEL_SRC)/kernel/rtc.rs $(KERNEL_SRC)/kernel/input.rs $(KERNEL_SRC)/mm/shmem.rs $(KERNEL_SRC)/kernel/errno_base.rs $(KERNEL_SRC)/fs/dcache.rs $(KERNEL_SRC)/fs/fs.rs\
+	$(KERNEL_SRC)/fs/mnt_idmapping.rs $(KERNEL_SRC)/fs/libfs.rs
 ENTRYPOINT:=0x0xffff800000100000
 # RFLAGS+= target-feature=-crt-static
 RFLAGS:=$(strip ${RFLAGS})

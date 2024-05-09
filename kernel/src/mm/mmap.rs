@@ -1,6 +1,6 @@
 use core::{ffi::c_void, ptr::null_mut};
 
-use crate::{kernel::{Off, sched::get_current_running_process}, fs::{namei::Fd, file::{FileStruct, EOF}}};
+use crate::{kernel::{Off, sched::get_current_running_process}, fs::{namei::Fd, file::{File, EOF}}};
 
 use super::mm_type::{VMAreaStruct, MmapType};
 
@@ -24,7 +24,7 @@ pub fn sys_mmap(addr : *const c_void, length : usize, port : MmapType, flags : M
         }
     }
 }
-pub fn __do_mmap(addr : *const c_void, length : usize, prot : MmapType, flags : MmapType, file_t : *mut FileStruct, offset : Off) -> *mut VMAreaStruct
+pub fn __do_mmap(addr : *const c_void, length : usize, prot : MmapType, flags : MmapType, file_t : *mut File, offset : Off) -> *mut VMAreaStruct
 {
     unsafe
     {

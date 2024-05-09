@@ -1,6 +1,6 @@
 use core::{ffi::{c_char, c_void}, mem::size_of, ptr::null_mut, iter::empty};
 
-use crate::{fs::file::{FileStruct, EOF, FS}, mm::{mmap::{sys_mmap, __do_mmap}, memory::PAGE_SIZE, mm_type::MmapType}};
+use crate::{fs::file::{File, EOF, FS}, mm::{mmap::{sys_mmap, __do_mmap}, memory::PAGE_SIZE, mm_type::MmapType}};
 
 use super::{Off, io};
 
@@ -310,7 +310,7 @@ fn elf64_validate(ehdr : *const Elf64Ehdr) -> bool
     }
 }
 
-pub fn load_elf64(file_t : *mut FileStruct) -> i64
+pub fn load_elf64(file_t : *mut File) -> i64
 {
     unsafe
     {
@@ -342,7 +342,7 @@ pub fn load_elf64(file_t : *mut FileStruct) -> i64
     }
 }
 
-fn load_segment64(elf64_phdr : *mut Elf64Phdr, file_t : *mut FileStruct) -> bool
+fn load_segment64(elf64_phdr : *mut Elf64Phdr, file_t : *mut File) -> bool
 {
     unsafe
     {

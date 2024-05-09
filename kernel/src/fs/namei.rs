@@ -1,6 +1,9 @@
-use core::{ffi::{c_char, c_void}, ptr::null_mut, iter::empty};
-use crate::kernel::{sched::get_current_running_process, string::{is_separator, strrsep}};
-use super::file::{DirEntry, FSPermission, FSType, FileFlag, FileStruct, Inode, FS};
+use core::{ffi::{c_char, c_void, CStr}, iter::empty, ptr::null_mut};
+use core::intrinsics::ptr_offset_from_unsigned;
+use alloc::string::String;
+
+use crate::kernel::{sched::get_current_running_process, string::{is_separator, strsep}};
+use super::{dcache::DEntry, file::{DirEntry, FSPermission, FSType, FileFlag, File, FS}, inode::Inode};
 pub type Fd = usize;
 
 
@@ -9,7 +12,7 @@ pub fn permission(inode : *mut Inode, perm : FSPermission) -> bool
     unsafe
     {
         let process = get_current_running_process();
-        let mut mode = (*inode).i_mode.bits();
+        let mut mode = (*inode).i_perm.bits();
         if (*process).uid == 0
         {
             return true;
@@ -32,20 +35,20 @@ pub fn permission(inode : *mut Inode, perm : FSPermission) -> bool
     }
 }
 
-pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut FileStruct
+pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut DEntry
 {
     unsafe
     {
-        let mut file_t;
+        let mut dentry_t;
         let pcb = get_current_running_process();
         let mut left = path_name as *mut c_char;
         if is_separator(*left)
         {
-            file_t = (*pcb).get_iroot();
+            dentry_t = (*pcb).get_iroot();
             left = left.offset(1);
         }
         else if *left != 0 {
-            file_t = (*pcb).get_ipwd();
+            dentry_t = (*pcb).get_ipwd();
         }
         else {
             return null_mut()
@@ -53,63 +56,51 @@ pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut FileStr
         *next = left;
         if *left == 0
         {
-            return file_t;
+            return dentry_t;
         }
-        let mut right = strrsep(left);
+        let mut right = strsep(left);
         if right.is_null() || right < left
         {
-            return file_t;
+            return dentry_t;
         }
         right = right.offset(1);
         *next = left;
-        let mut result_entry = DirEntry::empty();
         loop
         {
-            (*(*file_t).inode).find_entry(left, &mut *next, &mut result_entry);
-            if result_entry.dir_entry_type == FSType::None
+            let name_len = ptr_offset_from_unsigned(right, left) - 1;
+            let name = String::from_raw_parts(*next as *mut u8, name_len, name_len);
+            dentry_t = (*dentry_t).look_up(&name);
+            if dentry_t.is_null()
             {
                 return null_mut();
             }
-            let tmp_inode = FS.get_file((*(*file_t).inode).dev, result_entry.get_entry_point_to(), FileFlag::empty());
-            FS.release_file(file_t);
-            file_t = tmp_inode;
-            if !(*(*file_t).inode).is_dir() || !permission((*file_t).inode, FSPermission::EXEC)
+            
+            left = right;
+            right = strsep(left);
+
+            if right.is_null() || right < left
             {
-                FS.release_file(file_t);
-                return null_mut();
+                *next = left;
+                return dentry_t;
             }
-            if right == *next
-            {
-                return file_t;
-            }
-            left = *next;
         }
     }
 }
 
-pub fn namei(path : *const c_char) -> *mut FileStruct
+pub fn namei(path : *const c_char) -> *mut DEntry
 {
     unsafe
     {
         let mut next = null_mut();
-        let dir = named(path, &mut next);
-        if dir.is_null()
+        let dentry_t = named(path, &mut next);
+        if dentry_t.is_null()
         {
             return null_mut();
         }
         if next.is_null()
         {
-            return dir;
+            return dentry_t;
         }
-        let name = next;
-        let mut entry = DirEntry::empty();
-        (*(*dir).inode).find_entry(name, &mut next, &mut entry);
-        if entry.dir_entry_type == FSType::None
-        {
-            return null_mut();
-        }
-        let file_t = FS.get_file((*(*dir).inode).dev, entry.get_entry_point_to(), FileFlag::empty());
-        entry.dispose();
-        file_t
+        (*dentry_t).look_up(&String::from(CStr::from_ptr(next).to_str().unwrap()))
     }
 }

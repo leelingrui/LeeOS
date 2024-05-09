@@ -1,8 +1,10 @@
 use core::{alloc::Layout, cmp::min, ffi::{c_char, c_void}, ptr::null_mut, sync::atomic::AtomicI64};
 
-use crate::{fs::file::{EOF, FS, FSType}, kernel::{buffer::{Buffer, self}, string::{EOS, is_separator}, sched::get_current_running_process}, mm::memory::PAGE_SIZE};
+use alloc::string::String;
 
-use super::file::{DirEntry, FSPermission, Inode, LogicalPart};
+use crate::{fs::file::{FSType, FileFlag, EOF, FS}, kernel::{buffer::{self, Buffer}, sched::get_current_running_process, string::{is_separator, EOS}}, mm::memory::PAGE_SIZE};
+
+use super::{dcache::DEntry, file::{DirEntry, FSPermission, FileMode, LogicalPart}, inode::Inode};
 
 
 
@@ -66,6 +68,34 @@ bitflags::bitflags! {
         const IFSOCK = 0o140000; // SOCKET file
 
     }
+}
+
+pub fn ext4_load_all_entries(dentry : &mut DEntry, inode : &mut Inode)
+{
+    unsafe
+    {
+        assert!(is_dir((*((*inode).inode_desc_ptr as *mut Ext4Inode)).i_mode));
+        let sb = (*inode).logical_part_ptr;
+        let dir_size = (*inode).get_size();
+        let readable_buffer = alloc::alloc::alloc(Layout::from_size_align(dir_size, 1).unwrap()) as *mut c_void;
+        FS.read_inode(inode, readable_buffer, dir_size, 0);
+        let mut direntry_ptr = readable_buffer as *mut Ext4DirEntry2;
+        let mut offset = 0;
+        while dir_size > offset + (*direntry_ptr).rec_len as usize {
+            let name = String::from_raw_parts((*direntry_ptr).name.as_ptr() as *mut u8, (*direntry_ptr).name_len as usize, (*direntry_ptr).name_len as usize);
+            let inode = (*sb).get_inode((*direntry_ptr).inode as u64);
+            direntry_ptr = (direntry_ptr as *mut c_void).offset((*direntry_ptr).rec_len as isize) as *mut Ext4DirEntry2;
+            let child = dentry.new_child(&name);
+            (*child).d_inode = inode;
+            offset += (*direntry_ptr).rec_len as usize;
+        }
+        let name = String::from_raw_parts((*direntry_ptr).name.as_ptr() as *mut u8, (*direntry_ptr).name_len as usize, (*direntry_ptr).name_len as usize);
+        let inode = (*sb).get_inode((*direntry_ptr).inode as u64);
+        let child = dentry.new_child(&name);
+        (*child).d_inode = inode;
+        alloc::alloc::dealloc(readable_buffer as *mut u8, Layout::from_size_align((*inode).get_size(), 1).unwrap());
+    }
+
 }
 
 pub fn ext4_find_entry(dir : &mut Inode, name : *const c_char, next : &mut *mut c_char, result_entry_ptr : &mut DirEntry)
@@ -291,7 +321,11 @@ pub fn is_reg(f_mode : u16) -> bool
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFREG.bits()
 }
 
-#[inline(always)]
+fn to_file_mode(file_mode : &Ext4FileMode) -> FileMode
+{
+    FileMode::from_bits(file_mode.bits()).unwrap()
+}
+
 pub fn ext4_inode_desc_get(logical_part : &mut LogicalPart, inode : *mut Inode, logic_block_size : i32, nr : Idx)
 {
     unsafe {
@@ -300,7 +334,8 @@ pub fn ext4_inode_desc_get(logical_part : &mut LogicalPart, inode : *mut Inode, 
         (*inode).inode_block_buffer = buffer;
         (*inode).inode_desc_ptr = (*buffer).buffer.offset((256 * (nr - 1) % (1024 * logic_block_size as u64)).try_into().unwrap());
         let desc = (*buffer).buffer.offset((256 * (nr - 1) % (1024 * logic_block_size as u64)).try_into().unwrap()) as *const Ext4Inode;
-        (*inode).i_mode = FSPermission::from_bits((*desc).i_mode).unwrap();
+        (*inode).i_mode = to_file_mode(&Ext4FileMode::from_bits((*desc).i_mode & Ext4FileMode::IFMT.bits()).unwrap());
+        (*inode).i_perm = FSPermission::from_bits((*desc).i_mode & FSPermission::MASK.bits()).unwrap();
         (*inode).i_uid = (*desc).i_uid as u32;
         (*inode).i_gid = (*desc).i_gid as u32;
         (*inode).i_nlink = AtomicI64::new((*desc).i_links_count as i64);

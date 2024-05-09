@@ -32,7 +32,7 @@ global_asm!(include_str!("../kernel/entry.asm"));
 #[panic_handler]
 pub fn panic(_info: &PanicInfo) -> !
 {
-    printk!("{_info}\n");
+    printk!("{:#?}\n", _info);
     loop {
         
     }
