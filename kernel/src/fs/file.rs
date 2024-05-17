@@ -1,11 +1,13 @@
-use core::{ffi::{c_char, c_void, CStr}, alloc::Layout, ptr::null_mut, mem::size_of, sync::atomic::AtomicI64};
+use core::{ffi::{c_char, c_void, CStr}, alloc::Layout, ptr::{null, null_mut}, mem::size_of, sync::atomic::{AtomicI64, AtomicU32, AtomicU64}};
 
 use alloc::{vec::Vec, collections::BTreeMap};
+use bitflags::Flags;
 
-use crate::{kernel::{console::CONSOLE, device::DevT, process::PCB, bitmap::BitMap, math::{pow, self}, buffer::Buffer, semaphore::RWLock, list::ListHead, sched::get_current_running_process, Off}, mm::memory::PAGE_SIZE, fs::ext4::{ext4_get_logic_block_idx, ext4_inode_format}, printk};
+use crate::{kernel::{bitmap::BitMap, buffer::Buffer, console::CONSOLE, device::DevT, io::SECTOR_SIZE, list::ListHead, math::{pow, self}, process::PCB, sched::get_current_running_process, semaphore::RWLock, Off}, mm::memory::PAGE_SIZE, fs::ext4::{ext4_get_logic_block_idx, ext4_inode_format, ext4_load_block_bitmap, ext4_load_inode_bitmaps}, printk, crypto::{crc16::crc16, crc32c::crc32c_le}};
 
-use super::{ext4::{Idx, Ext4SuperBlock, Ext4GroupDesc, ext4_inode_read, Ext4Inode, ext4_find_entry, ext4_match_name, Ext4DirEntry2, self, ext4_inode_block_read}, namei::FSPermission};
+use super::{ext4::{self, ext4_find_entry, ext4_group_desc_csum, ext4_inode_block_read, ext4_inode_read, ext4_match_name, Ext4DirEntry2, Ext4GroupDesc, Ext4Inode, Ext4SuperBlock, Idx}, namei::FSPermission};
 pub static mut FS : FileSystem = FileSystem::new();
+
 
 pub struct FileSystem
 {
@@ -51,7 +53,30 @@ impl FileStruct {
     }
 }
 
+pub fn init_filesystem()
+{
+    unsafe
+    {
+        FS.init();
+    }
+}
+
 impl FileSystem {
+    fn init(&mut self)
+    {
+        unsafe
+        {
+            self.iroot = alloc::alloc::alloc(Layout::new::<FileStruct>()) as *mut FileStruct;
+            self.imount = alloc::alloc::alloc(Layout::new::<FileStruct>()) as *mut FileStruct;
+            (*self.iroot).count = AtomicI64::new(1);
+            (*self.imount).count = AtomicI64::new(1);
+            (*self.iroot).flag = FileFlag::O_RDWR;
+            (*self.imount).flag = FileFlag::O_RDWR;
+            (*self.iroot).offset = 0;
+            (*self.imount).offset = 0;
+        }
+    }
+
 
     pub fn read_file_logic_block(&mut self, file_t : *mut FileStruct, block_idx : Idx) -> *mut Buffer
     {
@@ -77,7 +102,6 @@ impl FileSystem {
         {
             // todo!() check file readable
             self.read_inode((*file_t).inode, buffer, len, offset)
-            
         }
     }
 
@@ -110,7 +134,6 @@ impl FileSystem {
             (*self.iroot).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             self.iroot
         }
-
     }
 
     const fn new() -> Self
@@ -131,7 +154,6 @@ impl FileSystem {
                 panic!("not fund device {}\n", &(*inode).dev);
             }
         }
-
     }
 
     pub fn load_root_super_block(&mut self, dev : DevT, super_block : *mut c_void)
@@ -139,33 +161,46 @@ impl FileSystem {
         unsafe
         {
             let sb = super_block as *mut Ext4SuperBlock;
+            let result = crc32c_le(!0, super_block as *const c_void, size_of::<Ext4SuperBlock>()); // check crc;
+            if result != 0
+            {
+                panic!("bad superblock");
+            }
             self.logical_part.insert(dev ,LogicalPart::new());
             self.root_dev = dev;
             let new_sb = self.logical_part.get_mut(&dev).unwrap();
             new_sb.super_block = sb as *mut c_void;
             new_sb.fs_type = FSType::Ext4;
             new_sb.dev = dev;
-            new_sb.logic_block_size = pow(2.0, (*sb).s_log_block_size.into()) as i32;
+            new_sb.logic_block_size = pow(2.0, (*sb).s_log_block_size as f64) as i32;
             new_sb.logic_block_count = (((*sb).s_blocks_count_hi as usize) << 32) + (*sb).s_blocks_count_lo as usize;
             new_sb.inode_count = (*sb).s_inodes_count as usize;
             new_sb.inode_per_group = (*sb).s_inodes_per_group as usize;
             new_sb.blocks_per_group = (*sb).s_blocks_per_group as usize;
+            new_sb.s_csum_seed = crc32c_le(!0, (*sb).s_uuid.as_ptr() as *const c_void, 16);
             let mut var = 0;
-            let group_num = ((*sb).s_blocks_count_lo as i64 + (((*sb).s_blocks_count_hi as i64) << 32)) / (*sb).s_blocks_per_group as i64;
+            let group_num = ((*sb).s_blocks_count_lo as i64 + (((*sb).s_blocks_count_hi as i64) << 32)).div_ceil((*sb).s_blocks_per_group as i64);
             // init group desc
-            while var <= group_num {
-                let desc = Self::load_group_desc(dev, (8 + 2 * var * (*sb).s_blocks_per_group as i64).try_into().unwrap());
+            while var < group_num {
+                let desc = Self::load_group_desc(dev, var as Idx);
+                let group_desc_checksum = ext4_group_desc_csum(&new_sb, 0 as u32, desc);
+                if group_desc_checksum != (*desc).bg_checksum as u16
+                {
+                    panic!("bad groupdesc");
+                }
                 new_sb.group_desc.push(GroupDesc::new(new_sb));
                 let new_desc = new_sb.group_desc.last_mut().unwrap();
-                new_desc.group_desc_ptr = desc;
+                new_desc.group_desc_ptr = desc as *mut c_void;
                 new_desc.load_bitmaps();
                 new_desc.inode_table_offset = (((*desc).bg_inode_table_hi as u64) << 32) + (*desc).bg_inode_table_lo as u64;
                 new_desc.data_block_start = new_desc.inode_table_offset as usize + math::upround((*sb).s_inodes_per_group as u64 * 256, new_sb.logic_block_size as u64 * 1024) as usize / (new_sb.logic_block_size as usize * 1024);
                 var += 1;
             }
+            let temp_root = FS.get_file(dev, 2, FileFlag::O_RDWR);
+            let temp_mount = FS.get_file(dev, 2, FileFlag::O_RDWR);
             // get root dir
-            self.iroot = FS.get_file(dev, 2, FileFlag::empty());
-            self.imount = FS.get_file(dev, 2, FileFlag::empty());
+            (*self.iroot).inode = (*temp_root).inode;
+            (*self.imount).inode = (*temp_mount).inode;
             (*(*self.iroot).inode).mount = dev;
         }
 
@@ -173,14 +208,12 @@ impl FileSystem {
 
     pub fn get_file(&mut self, dev : DevT, inode_idx : Idx, file_flag : FileFlag) -> *mut FileStruct
     {
-        let sb = self.logical_part.get_mut(&dev);
-        if sb.is_some()
-        {
-            sb.unwrap().open_file(inode_idx, file_flag)
-        }
-        else 
-        {
-            null_mut()
+        match self.logical_part.get_mut(&dev) {
+            Some(sb) => 
+            {
+                sb.open_file(inode_idx, file_flag)
+            },
+            None => null_mut(),
         }
     }
 
@@ -189,8 +222,8 @@ impl FileSystem {
         unsafe
         {
             let desc = alloc::alloc::alloc(Layout::new::<Ext4GroupDesc>()) as *mut Ext4GroupDesc;
-            let src = disk_read(dev, idx, 2);
-            (*src).read_from_buffer(desc as *mut c_void, 0, size_of::<Ext4GroupDesc>());
+            let src = disk_read(dev, 8 + (idx / size_of::<Ext4GroupDesc>() as Idx), 1);
+            (*src).read_from_buffer(desc as *mut c_void, size_of::<Ext4GroupDesc>() * (idx as usize % (SECTOR_SIZE as usize / size_of::<Ext4GroupDesc>())), size_of::<Ext4GroupDesc>());
             desc
         }
 
@@ -206,12 +239,12 @@ pub const EOF : i64 = -1;
 
 pub struct GroupDesc
 {
-    logical_block_bitmap : BitMap,
-    inode_bitmap : BitMap,
-    group_desc_ptr : *mut Ext4GroupDesc,
-    group_desc_no : u32,
-    parent : *const LogicalPart,
-    inode_table_offset : Idx,
+    pub logical_block_bitmap : BitMap,
+    pub inode_bitmap : BitMap,
+    pub group_desc_ptr : *mut c_void,
+    pub group_desc_no : u32,
+    pub parent : *const LogicalPart,
+    pub inode_table_offset : Idx,
     pub data_block_start : usize
 }
 
@@ -225,15 +258,16 @@ impl GroupDesc {
     {
         unsafe
         {
-            assert!(!self.group_desc_ptr.is_null());
-            let block_map_buffer = (*self.parent).read_block(((*self.group_desc_ptr).bg_block_bitmap_hi as usize) << 32 + (*self.group_desc_ptr).bg_block_bitmap_lo as usize);
-            let block_map = alloc::alloc::alloc(Layout::new::<[c_void; PAGE_SIZE]>());
-            (*block_map_buffer).read_from_buffer(block_map as *mut c_void, 0, 1024 * (*self.parent).logic_block_size as usize);
-            self.logical_block_bitmap.reset_bitmap(block_map, (*((*self.parent).super_block as *const Ext4SuperBlock)).s_blocks_per_group as usize);
-            let inode_map_buffer = (*self.parent).read_block(((*self.group_desc_ptr).bg_inode_bitmap_hi as usize) << 32 + (*self.group_desc_ptr).bg_inode_bitmap_lo as usize);
-            let inode_map = alloc::alloc::alloc(Layout::new::<[c_void; PAGE_SIZE]>());
-            (*inode_map_buffer).read_from_buffer(block_map as *mut c_void, 0, 1024 * (*self.parent).logic_block_size as usize);
-            self.inode_bitmap.reset_bitmap(inode_map, (*((*self.parent).super_block as *const Ext4SuperBlock)).s_inodes_per_group as usize)
+            match (*self.parent).fs_type {
+                FSType::Ext4 => 
+                {
+                    assert!(!self.group_desc_ptr.is_null());
+                    ext4_load_block_bitmap(self);
+                    ext4_load_inode_bitmaps(self);
+                },
+                FSType::None => panic!("unknow filesystem!"),
+            }
+
         }
     }
 }
@@ -252,7 +286,8 @@ pub struct LogicalPart
     pub file_map : BTreeMap<Idx, *mut FileStruct>,
     pub data_map : BTreeMap<Idx, *mut Buffer>,
     pub inode_per_group : usize,
-    pub blocks_per_group : usize
+    pub blocks_per_group : usize,
+    pub s_csum_seed : u32
 }
 
 #[derive(PartialEq)]
@@ -266,7 +301,7 @@ pub struct Inode
     pub inode_block_buffer : *mut Buffer,
     pub inode_desc_ptr : *mut c_void,
     pub logical_part_ptr : *mut LogicalPart,
-    pub count : u32,
+    pub count : AtomicU32,
     pub rx_waiter : *mut PCB,
     pub tx_waiter : *mut PCB,
     pub mount : DevT,
@@ -275,6 +310,11 @@ pub struct Inode
 }
 
 impl Inode {
+    pub fn copy(&mut self) -> *mut Self
+    {
+        self.count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        self as *mut Self
+    }
     pub fn is_dir(&self) -> bool
     {
         unsafe
@@ -340,7 +380,7 @@ impl DirEntry {
                 FSType::None => panic!("unsupport fs\n"),
                 FSType::Ext4 => {
                     printk!("entery file name :{}\n", CStr::from_ptr((*(self.entry_ptr as *const Ext4DirEntry2)).name.as_ptr()).to_str().unwrap())
-                },
+                }
             }
         }
     }
@@ -448,7 +488,7 @@ impl LogicalPart {
         }
     }
 
-    pub fn release_buffer(&mut self, buffer : *mut Buffer)
+    pub fn release_buffer(&mut self, buffer : *mut Buffer, idx : Idx)
     {
         unsafe
         {
@@ -463,7 +503,7 @@ impl LogicalPart {
             }
             if (*buffer).dirty
             {
-                (*buffer).write_to_device();
+                (*buffer).write_to_device((*buffer).get_dev(), idx, (self.logic_block_size * 2) as usize);
             }
             self.data_map.remove(&(*buffer).get_idx());
             (*buffer).dispose();
@@ -479,18 +519,31 @@ impl LogicalPart {
             let file = self.file_map.get_mut(&nr);
             match file {
                 Some(ptr) => {
+                    if (**ptr).flag.contains(FileFlag::O_EXCL)
+                    {
+                        return null_mut();
+                    }
                     (*(*ptr)).count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     *ptr
                 },
                 None => {
                     let inode = self.get_inode(nr);
                     let f_struct = alloc::alloc::alloc(Layout::new::<FileStruct>()) as *mut FileStruct;
-                    (*f_struct) = FileStruct::new();
                     if !f_struct.is_null()
                     {
+                        if inode.is_null()
+                        {
+                            alloc::alloc::dealloc(f_struct as *mut u8, Layout::new::<FileStruct>());
+                            return null_mut();
+                        }
+                        (*f_struct) = FileStruct::new();
                         (*f_struct).inode = inode;
                         (*f_struct).flag = flag;
                         self.file_map.insert(nr, f_struct);
+                    }
+                    else {
+                        self.release_inode(inode);
+                        return null_mut();
                     }
                     self.buffer_opened_file(f_struct);
                     f_struct
@@ -538,7 +591,7 @@ impl LogicalPart {
 
     fn new() -> Self
     {
-        Self { fs_type: FSType::None, super_block: null_mut(), group_desc: Vec::new(), logic_block_size: 0, logic_block_count: 0, inode_count: 0, dev: 0, file_map: BTreeMap::new(), inode_per_group: 0, data_map: BTreeMap::new(), blocks_per_group: 0 }
+        Self { fs_type: FSType::None, super_block: null_mut(), group_desc: Vec::new(), logic_block_size: 0, logic_block_count: 0, inode_count: 0, dev: 0, file_map: BTreeMap::new(), inode_per_group: 0, data_map: BTreeMap::new(), blocks_per_group: 0, s_csum_seed: 0 }
     }
 
     pub fn read_block(&self, logic_block_no : usize) -> *mut Buffer
@@ -550,8 +603,8 @@ impl LogicalPart {
     {
         unsafe
         {
-            (*inode).count -= 1;
-            if (*inode).count == 0
+            let prev = (*inode).count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+            if prev == 1
             {
                 alloc::alloc::dealloc(inode as *mut u8, Layout::new::<Inode>());
             }
@@ -589,7 +642,7 @@ impl LogicalPart {
         let sb = self.super_block as *mut Ext4SuperBlock;
         unsafe {
             let desc = &self.group_desc[self.get_group_desc_no(nr) as usize];
-            (desc.inode_table_offset + nr % (*sb).s_blocks_per_group as u64 / self.inode_per_blocks()).try_into().unwrap()
+            (desc.inode_table_offset + nr % (*sb).s_blocks_per_group as u64 / self.inode_per_blocks()) as Idx
         }
     }
 
@@ -602,7 +655,7 @@ impl LogicalPart {
             inode = self.get_free_inode();
             (*inode).dev = self.dev;
             (*inode).nr = inode_idx;
-            (*inode).count += 1;
+            (*inode).count = AtomicU32::new(1);
             let block_no = self.get_inode_logical_block(inode_idx);
             let buffer = self.read_block(block_no as usize);
             (*inode).inode_block_buffer = buffer;

@@ -2,7 +2,7 @@ use core::time;
 
 use crate::{logk, printk};
 
-use super::{rtc::RealTimeClock, io::{CMOS_SECOND, CMOS_MINUTE, CMOS_HOUR, CMOS_DAY, CMOS_MONTH, CMOS_YEAR, CMOS_WEEKDAY, CMOS_CENTURY}};
+use super::{rtc::RealTimeClock, io::{CMOS_SECOND, CMOS_MINUTE, CMOS_HOUR, CMOS_DAY, CMOS_MONTH, CMOS_YEAR, CMOS_WEEKDAY, CMOS_CENTURY}, clock::{JIFFIES, JIFFY}};
 
 static mut CENTURY : u32 = 0;
 static mut STARTUP_TIME : Time = Time::new();
@@ -87,7 +87,6 @@ impl TM
             tm.tm_yday = Self::bcd_to_bin(tm.tm_yday as u8) as u32;
             tm
         }
-
     }
 }
 
@@ -144,7 +143,10 @@ pub fn sys_time() -> Time
 {
     unsafe
     {
-        STARTUP_TIME
+        Time 
+        {
+            tick: STARTUP_TIME.tick + (JIFFIES * JIFFY) / 1000,
+        }
     }
 }
 

@@ -309,7 +309,7 @@ pub fn device_ioctl(dev_t : DevT, cmd : i64, args : *mut c_void, flags : u32) ->
     }
 }
 
-#[inline]
+#[inline(always)]
 fn create_request(buffer : *mut c_void, count : usize, dev : u32, offset : usize) -> *mut RequestDescriptor
 {
     unsafe

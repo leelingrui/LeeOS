@@ -1,8 +1,10 @@
-use core::{ffi::{c_char, c_void}, cmp::min, ptr::null_mut, alloc::Layout};
+use core::{alloc::Layout, cmp::min, ffi::{c_char, c_void}, mem::{offset_of, size_of}, panic, ptr::null_mut};
 
-use crate::{fs::file::{EOF, FS, FSType}, kernel::{buffer::{Buffer, self}, string::{EOS, is_separator}, sched::get_current_running_process}, mm::memory::PAGE_SIZE};
+use alloc::{alloc::{alloc, dealloc}, vec::Vec};
 
-use super::{file::{LogicalPart, Inode, DirEntry}, namei::FSPermission};
+use crate::{fs::file::{EOF, FS, FSType}, kernel::{buffer::{Buffer, self}, device::{DevT, device_ioctl, DEV_CMD_SECTOR_COUNT}, io::SECTOR_SIZE, math::{log2, pow}, sched::get_current_running_process, string::{is_separator, memset, EOS}, time::sys_time}, mm::memory::PAGE_SIZE, crypto::{crc16::crc16, crc32c::{crc32c_le, reverse32, reverse8}}};
+
+use super::{file::{DirEntry, GroupDesc, Inode, LogicalPart}, namei::FSPermission, super_block};
 
 
 
@@ -23,6 +25,31 @@ const EXT4_DIRECT_BLOCK : u64 = 12;
 const EXT4_INDIRECT1_BLOCK : u64 = 12 + 1024;
 const EXT4_INDIRECT2_BLOCK : u64 = 12 + 1024 * 1024;
 const EXT4_INDIRECT3_BLOCK : u64 = 12 + 1024 * 1024 * 1024;
+
+const RO_COMPAT_SPARSE_SUPER : i32 = 0x1;
+const RO_COMPAT_LARGE_FILE : i32 = 0x2;
+const RO_COMPAT_BTREE_DIR : i32 = 0x4;
+const RO_COMPAT_HUGE_FILE : i32 = 0x8;
+const RO_COMPAT_GDT_CSUM : i32 = 0x10;
+const RO_COMPAT_DIR_NLINK : i32 = 0x20;
+const RO_COMPAT_EXTRA_ISIZE : i32 = 0x40;
+const RO_COMPAT_HAS_SNAPSHOT : i32 = 0x80;
+const RO_COMPAT_QUOTA : i32 = 0x100;
+const RO_COMPAT_BIGALLOC : i32 = 0x200;
+const RO_COMPAT_METADATA_CSUM : i32 = 0x400;
+const RO_COMPAT_REPLICA : i32 = 0x800;
+const RO_COMPAT_READONLY : i32 = 0x1000;
+const RO_COMPAT_PROJECT : i32 = 0x2000;
+const RO_COMPAT_VERITY : i32 = 0x8000;
+const RO_COMPAT_ORPHAN_PRESENT : i32 = 0x10000;
+
+
+const DEF_HASH_VERSION_LEGACY : u8 = 0;
+const DEF_HASH_VERSION_HALF_MD4 : u8 = 0;
+const DEF_HASH_VERSION_TEA : u8 = 0;
+const DEF_HASH_VERSION_ULAGACY : u8 = 0;
+const DEF_HASH_VERSION_UHALF_MD4 : u8 = 0;
+const DEF_HASH_VERSION_UTEA : u8 = 0;
 
 pub fn ext4_permission_check(inode : *mut Inode, perm : FSPermission) -> bool
 {
@@ -82,6 +109,14 @@ pub fn ext4_match_name(name : *const c_char, entry_name : *const c_char, next : 
     }
 }
 
+pub fn write_super_block_check_sum(sb : *mut Ext4SuperBlock)
+{
+    unsafe
+    {
+        let result = crc32c_le(!0, sb as *mut c_void, size_of::<Ext4SuperBlock>() - 4);
+        (*sb).s_checksum = result as i32;
+    }
+}
 
 bitflags::bitflags! {
     struct Ext4FileMode : u16
@@ -94,7 +129,196 @@ bitflags::bitflags! {
         const IFIFO = 0o10000;  // FIFO 特殊文件
         const IFLNK = 0o120000;  // 符号连接
         const IFSOCK = 0o140000; // SOCKET file
+    }
+}
 
+// n is power of p
+fn is_power_of_n(mut n : i64, p : i64) -> bool
+{
+    if p == 0 && p == 1
+    {
+        return n == p;
+    }
+    while n != 0 && ((n % p) == 0) {
+        n /= p;
+    }
+    return n == 1;
+}
+
+pub fn ext4_flax_group_init(dev : DevT, sb : *mut Ext4SuperBlock)
+{
+    unsafe
+    {
+        let mut first_group_desc_of_flex_groups;
+        let mut left_blocks = (((*sb).s_blocks_count_hi as i64) << 32) + (*sb).s_blocks_count_lo as i64;
+        let current_group_blocks = (*sb).s_blocks_per_group as i64;
+        let current_group_free_inodes = (*sb).s_inodes_per_group as i64;
+        let mut block_no = 0;
+        let group_desc_buffer = alloc(Layout::new::<[Buffer; 3]>()) as *mut Buffer;
+        let inode_table_desc = group_desc_buffer.offset(1);
+        let block_table_desc = group_desc_buffer.offset(2);
+
+        *group_desc_buffer = Buffer::new(PAGE_SIZE);
+        let group_number = left_blocks.div_ceil(32768);
+        let mut group_no = 0;
+        let group_bach = pow(2.0, (*sb).s_log_block_size as f64) as usize * 2;
+        let flex_batch = pow(2.0, (*sb).s_log_groups_per_flex as f64) as i64;
+        while group_no < group_number {
+            // init group desc
+            let group_desc = ((*group_desc_buffer).buffer as *mut Ext4GroupDesc).offset(group_no as isize % 64);
+            let mut current_group_free_blocks = if left_blocks > (*sb).s_blocks_per_group as i64
+            {
+                (*sb).s_blocks_per_group as i64
+            }
+            else
+            {
+                left_blocks
+            };
+            let current_group_free_inodes = if current_group_free_blocks * 16 < current_group_free_inodes
+            {
+                current_group_free_blocks * 16
+            }
+            else
+            {
+                current_group_free_inodes
+            };
+            let mut used_blocks = current_group_free_inodes / 16;
+            let mut first_block_bitmap = 0;
+            if (group_no % flex_batch) == 0
+            {
+                used_blocks += flex_batch * 2 + group_number;
+                first_group_desc_of_flex_groups = group_desc;
+                first_block_bitmap = 2 + group_no;
+            }
+            
+
+            (*group_desc).bg_block_bitmap_lo = (first_block_bitmap & 0xffffffff) as u32;
+            (*group_desc).bg_block_bitmap_hi = ((first_block_bitmap >> 32) & 0xffffffff) as i32;
+            let first_inode_bitmap = first_block_bitmap + group_bach as i64;
+            (*group_desc).bg_inode_bitmap_lo = (first_inode_bitmap & 0xffffffff) as u32;
+            (*group_desc).bg_inode_bitmap_hi = ((first_inode_bitmap >> 32) & 0xffffffff) as i32;
+            (*group_desc).bg_free_blocks_count_lo = (current_group_free_blocks & 0xffffff) as u16;
+            (*group_desc).bg_free_blocks_count_hi = ((current_group_free_blocks >> 32) & 0xffffffff) as i16;
+            (*group_desc).bg_free_inodes_count_lo = (current_group_free_inodes & 0xffffff) as u16;
+            (*group_desc).bg_free_inodes_count_hi = ((current_group_free_inodes >> 32) & 0xffffffff) as i16;
+            (*group_desc).bg_used_dirs_count_lo = 0;
+            (*group_desc).bg_used_dirs_count_hi = 0;
+            (*group_desc).bg_flags = 0;
+
+            (*group_desc).bg_exclude_bitmap_lo = 0;
+            (*group_desc).bg_exclude_bitmap_hi = 0;
+
+            (*group_desc).bg_itable_unused_lo = 0;
+            (*group_desc).bg_itable_unused_hi = 0;
+
+
+            if (group_no % 64) == 63
+            {
+                // sync to device
+                (*group_desc_buffer).write_to_device(dev, 1 * group_bach as u64, group_bach);
+
+                (*group_desc_buffer).write_to_device(dev, 32768 * group_bach as u64, group_bach);
+                let mut back_up_blocks = 3;
+                while back_up_blocks < group_number {
+                    (*group_desc_buffer).write_to_device(dev, back_up_blocks as Idx * 32768 * group_bach as u64, group_bach);
+                    back_up_blocks *= 3;
+                }
+                let mut back_up_blocks = 5;
+                while back_up_blocks < group_number {
+                    (*group_desc_buffer).write_to_device(dev, back_up_blocks as Idx * 32768 * group_bach as u64, group_bach);
+                    back_up_blocks *= 5;
+                }
+                let mut back_up_blocks = 7;
+                while back_up_blocks < group_number {
+                    (*group_desc_buffer).write_to_device(dev, back_up_blocks as Idx * 32768 * group_bach as u64, group_bach);
+                    back_up_blocks *= 7;
+                }
+            }
+            current_group_free_blocks -= current_group_blocks;
+            group_no += 1;
+        }
+        dealloc(group_desc_buffer as *mut u8, Layout::new::<[Buffer; 3]>());
+    }
+}
+
+pub fn devmkfs(dev : DevT, mut icount : usize)
+{
+    unsafe
+    {
+        let total_block = device_ioctl(dev, DEV_CMD_SECTOR_COUNT, null_mut(), 0) / 4096;
+        let blocks_count = total_block;
+        let buf = alloc(Layout::new::<Buffer>()) as *mut Buffer;
+        *buf = Buffer::new(4096);
+        memset((*buf).buffer as *mut u8, 0, 4096);
+        // init superblock
+        let sb = (*buf).buffer.offset(1024) as *mut Ext4SuperBlock;
+        if icount == 0
+        {
+            icount = ((blocks_count).div_floor(8) * 8) as usize;
+        }
+        (*sb).s_inodes_count = icount as u32;
+        (*sb).s_blocks_count_lo = ((total_block) & 0xffffffff) as u32;
+        (*sb).s_blocks_count_hi = ((total_block) >> 32) as u32;
+        (*sb).s_r_blocks_count_lo = ((total_block) & 0xffffffff) as u32;
+        (*sb).s_r_blocks_count_lo = ((total_block) >> 32) as u32;
+        (*sb).s_free_blocks_count_lo = ((total_block - blocks_count) & 0xffffffff) as u32;
+        (*sb).s_free_blocks_count_hi = (((total_block - blocks_count) >> 32) & 0xffffffff) as u32;
+        (*sb).s_free_inodes_count = icount as i32;
+
+
+        (*sb).s_log_block_size = 2;
+        (*sb).s_log_cluster_size = 2;
+        (*sb).s_inodes_per_group = 8 * SECTOR_SIZE as i32 * pow(2.0, (*sb).s_log_block_size as f64) as i32;
+        (*sb).s_blocks_per_group = 8 * SECTOR_SIZE as i32 * pow(2.0, (*sb).s_log_block_size as f64) as i32;
+        
+        if icount > (*sb).s_inodes_per_group as usize
+        {
+            (*sb).s_inodes_per_group = (*sb).s_inodes_per_group;
+        }
+        else {
+            (*sb).s_inodes_per_group = icount as i32;
+        }
+
+        let time = sys_time();
+        (*sb).s_mtime = (time.tick & 0xffffffff) as u32;
+        (*sb).s_mtime_hi = ((time.tick >> 32) & 0xff) as u8;
+        (*sb).s_wtime = (time.tick & 0xffffffff) as u32;
+        (*sb).s_wtime_hi = ((time.tick >> 32) & 0xff) as u8;
+        (*sb).s_max_mnt_count = -1;
+        (*sb).s_magic = -4269;
+        (*sb).s_state = 1;
+        (*sb).s_errors = 1;
+        (*sb).s_minor_rev_level = 0;
+        (*sb).s_lastcheck = (time.tick & 0xffffffff) as u32;
+        (*sb).s_lastcheck_hi = ((time.tick >> 32) & 0xff) as u8;
+        (*sb).s_rev_level = 1;
+        (*sb).s_first_ino = 11;
+        (*sb).s_inode_size = 256;
+        (*sb).s_feature_compat = 60;
+        (*sb).s_feature_incompat = 706;
+        (*sb).s_feature_ro_compat = 1131;
+
+        let uuid = [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ];
+        (*sb).s_uuid = uuid;
+        (*sb).s_reserved_gdt_blocks = 3;
+        (*sb).s_journal_inum = 8;
+
+        (*sb).s_def_hash_version = DEF_HASH_VERSION_HALF_MD4;
+        (*sb).s_jnl_backup_type = 0; // no journal backup
+        (*sb).s_desc_size = 64;
+        (*sb).s_default_mount_opts = 12;
+        (*sb).s_mkfs_time = time.tick as u32;
+        (*sb).s_min_extra_isize = 32;
+        (*sb).s_want_extra_isize = 32;
+        (*sb).s_flags = 1; // signed directory hash
+
+        (*sb).s_log_groups_per_flex = 4;
+        (*sb).s_checksum_type = 1; // crc32c
+        ext4_flax_group_init(dev, sb);
+
+
+        (*buf).write_to_device(dev, 0, SECTOR_SIZE as usize * pow(2.0, (*sb).s_log_block_size as f64) as usize);
+        (*buf).dispose();
     }
 }
 
@@ -196,13 +420,13 @@ pub fn ext4_get_logic_block_idx(logical_part : &mut LogicalPart, inode : *mut In
                     var = 0;
                     while ((*extent_block).node[var].nonleaf.ei_block as Idx) < idx {
                         let dst_block = (((*extent_block).node[var].nonleaf.ei_leaf_hi as Idx) << 32) + ((*extent_block).node[var].nonleaf.ei_leaf_lo as Idx);
-                        logical_part.release_buffer(buff);
+                        logical_part.release_buffer(buff, idx);
                         buff = logical_part.read_block(dst_block as usize);
                         extent_block = (*buff).buffer as *mut Ext4ExtentBlock;
                     }
                 }
                 while ((*extent_block).node[var].leaf_node.ee_block as Idx + (*extent_block).node[var].leaf_node.ee_len as Idx) > idx {
-                    logical_part.release_buffer(buff);
+                    logical_part.release_buffer(buff, idx);
                     return (*extent_block).node[var].leaf_node.ee_start_lo as Idx + (((*extent_block).node[var].leaf_node.ee_start_hi as Idx) << 32);
                 }
             }
@@ -245,6 +469,82 @@ pub fn ext4_inode_block_read(logical_part : &mut LogicalPart, inode : *mut Inode
     }
 }
 
+fn ext4_has_metadata_csum(super_block : *const Ext4SuperBlock) -> bool
+{
+    unsafe
+    {
+        ((*super_block).s_feature_ro_compat & RO_COMPAT_METADATA_CSUM) != 0
+    }
+}
+
+
+pub fn ext4_load_block_bitmap(gbi : &mut GroupDesc)
+{
+    unsafe
+    {
+        let grop_desc = gbi.group_desc_ptr as *const Ext4GroupDesc;
+        let idx = (((*grop_desc).bg_block_bitmap_hi as usize) << 32) | (*grop_desc).bg_block_bitmap_lo as usize;
+        let block_map_buffer = (*gbi.parent).read_block(idx);
+        let block_map = alloc::alloc::alloc(Layout::new::<[c_void; PAGE_SIZE]>());
+        
+        let size = (*((*gbi.parent).super_block as *mut Ext4SuperBlock)).s_clusters_per_group / 8;
+        (*block_map_buffer).read_from_buffer(block_map as *mut c_void, 0, 1024 * (*gbi.parent).logic_block_size as usize);
+        let calculated = crc32c_le((*gbi.parent).s_csum_seed, block_map as *const c_void, size as usize);
+        let provided = ((*grop_desc).bg_block_bitmap_csum_lo as u32) | (((*grop_desc).bg_block_bitmap_csum_hi as u32) << 16);
+        if provided != calculated
+        {
+            panic!("checksum error in loading block bitmap");
+        }
+        gbi.logical_block_bitmap.reset_bitmap(block_map, (*((*gbi.parent).super_block as *const Ext4SuperBlock)).s_blocks_per_group as usize);
+    }
+}
+
+pub fn ext4_load_inode_bitmaps(gbi : &mut GroupDesc)
+{
+    unsafe
+    {
+        let grop_desc = gbi.group_desc_ptr as *const Ext4GroupDesc;
+        let idx = (((*grop_desc).bg_inode_bitmap_hi as usize) << 32) | (*grop_desc).bg_inode_bitmap_lo as usize;
+        let inode_map_buffer = (*gbi.parent).read_block(idx);
+        let inode_map = alloc::alloc::alloc(Layout::new::<[c_void; PAGE_SIZE]>());
+        
+        let size = (*((*gbi.parent).super_block as *mut Ext4SuperBlock)).s_inodes_per_group / 8;
+        (*inode_map_buffer).read_from_buffer(inode_map as *mut c_void, 0, 1024 * (*gbi.parent).logic_block_size as usize);
+        let calculated = crc32c_le((*gbi.parent).s_csum_seed, inode_map as *const c_void, size as usize);
+        let provided = ((*grop_desc).bg_inode_bitmap_csum_lo as u32) | (((*grop_desc).bg_inode_bitmap_csum_hi as u32) << 16);
+        if provided != calculated
+        {
+            panic!("checksum error in loading block bitmap");
+        }
+        gbi.logical_block_bitmap.reset_bitmap(inode_map, (*((*gbi.parent).super_block as *const Ext4SuperBlock)).s_inodes_per_group as usize);
+    }
+}
+
+
+pub fn ext4_group_desc_csum(logic_part : &LogicalPart, block_group : u32, gdp : *const Ext4GroupDesc) -> u16
+{
+    unsafe
+    {
+        let mut group_desc_checksum;
+        let mut offset = offset_of!(Ext4GroupDesc, bg_checksum);
+        if ext4_has_metadata_csum(logic_part.super_block as *const Ext4SuperBlock)
+        {
+            let dummy_csum = 0u16;
+            let mut crc32 = crc32c_le(logic_part.s_csum_seed, &block_group as *const u32 as *const c_void, 4);
+            crc32 = crc32c_le(crc32, gdp as *const c_void, offset);
+            crc32 = crc32c_le(crc32, &dummy_csum as *const u16 as  *const c_void, 2);
+            offset += 2;
+            crc32 = crc32c_le(crc32, (gdp as *const c_void).offset(offset as isize), size_of::<Ext4GroupDesc>() - offset);
+            return (crc32 & 0xffff) as u16;
+        }
+        group_desc_checksum = crc16(!0, (*(logic_part.super_block as *const Ext4SuperBlock)).s_uuid.as_ptr() as *const c_void, 16);
+        group_desc_checksum = crc16(group_desc_checksum, &block_group as *const u32 as *const c_void, 4);
+        group_desc_checksum = crc16(group_desc_checksum, gdp as *const c_void, offset_of!(Ext4GroupDesc, bg_checksum));
+        group_desc_checksum
+    }
+
+}
+
 pub fn ext4_inode_read(logical_part : &mut LogicalPart, inode : *mut Inode, mut dst : *mut c_void, len : usize, offset : usize) -> i64
 {
     unsafe
@@ -259,7 +559,7 @@ pub fn ext4_inode_read(logical_part : &mut LogicalPart, inode : *mut Inode, mut 
         let mut read_begin = offset;
         let mut left = min(len, file_size - offset);
         while left > 0 {
-            let mut idx = offset as u64 / 1024 / logical_part.logic_block_size as u64;
+            let idx = offset as u64 / 1024 / logical_part.logic_block_size as u64;
             let buffer = ext4_inode_block_read(logical_part, inode, idx);
             let start = read_begin % (1024 * logical_part.logic_block_size as usize);
             let read_num = min((1024 * logical_part.logic_block_size as usize) - start, left);
@@ -267,62 +567,62 @@ pub fn ext4_inode_read(logical_part : &mut LogicalPart, inode : *mut Inode, mut 
             read_begin += read_num;
             (*buffer).read_from_buffer(dst, start, read_num);
             dst = dst.offset(read_num as isize);
-            logical_part.release_buffer(buffer);
+            logical_part.release_buffer(buffer, idx);
         }
         return (read_begin - offset) as i64;
     }
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_file(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFREG.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_dir(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFDIR.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_chr(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFCHR.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_blk(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFBLK.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_fifo(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFIFO.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_lnk(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFLNK.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_sock(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFSOCK.bits()
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_reg(f_mode : u16) -> bool
 {
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFREG.bits()
 }
 
 
-#[inline]
+#[inline(always)]
 pub fn ext4_inode_format(inode : *mut Inode, buffer : *mut Buffer, logic_block_size : i32, nr : Idx)
 {
     unsafe {
@@ -403,18 +703,18 @@ pub struct Ext4DirEntry
 #[repr(C)]
 pub struct Ext4GroupDesc  
 {  
-    pub bg_block_bitmap_lo : i32, /* Blocks bitmap block */  
-    pub bg_inode_bitmap_lo : i32, /* Inodes bitmap block */  
+    pub bg_block_bitmap_lo : u32, /* Blocks bitmap block */  
+    pub bg_inode_bitmap_lo : u32, /* Inodes bitmap block */  
     pub bg_inode_table_lo : i32,  /* Inodes table block */  
-    pub bg_free_blocks_count_lo : i16,/* Free blocks count */  
-    pub bg_free_inodes_count_lo : i16,/* Free inodes count */  
+    pub bg_free_blocks_count_lo : u16,/* Free blocks count */  
+    pub bg_free_inodes_count_lo : u16,/* Free inodes count */  
     pub bg_used_dirs_count_lo : i16,  /* Directories count */  
     pub bg_flags : i16,       /* EXT4_BG_flags (INODE_UNINIT, etc) */  
     pub bg_exclude_bitmap_lo : i32,   /* Exclude bitmap for snapshots */  
-    pub bg_block_bitmap_csum_lo : i16,/* crc32c(s_uuid+grp_num+bbitmap) LE */  
-    pub bg_inode_bitmap_csum_lo : i16,/* crc32c(s_uuid+grp_num+ibitmap) LE */  
+    pub bg_block_bitmap_csum_lo : u16,/* crc32c(s_uuid+grp_num+bbitmap) LE */  
+    pub bg_inode_bitmap_csum_lo : u16,/* crc32c(s_uuid+grp_num+ibitmap) LE */  
     pub bg_itable_unused_lo : i16,    /* Unused inodes count */  
-    pub bg_checksum : i16,        /* crc16(sb_uuid+group+desc) */  
+    pub bg_checksum : u16,        /* crc16(sb_uuid+group+desc) */  
     pub bg_block_bitmap_hi : i32, /* Blocks bitmap block MSB */  
     pub bg_inode_bitmap_hi : i32, /* Inodes bitmap block MSB */  
     pub bg_inode_table_hi : i32,  /* Inodes table block MSB */  
@@ -423,8 +723,8 @@ pub struct Ext4GroupDesc
     pub bg_used_dirs_count_hi : i16,  /* Directories count MSB */  
     pub bg_itable_unused_hi : i16,    /* Unused inodes count MSB */  
     pub bg_exclude_bitmap_hi : i32,   /* Exclude bitmap block MSB */  
-    pub bg_block_bitmap_csum_hi : i16,/* crc32c(s_uuid+grp_num+bbitmap) BE */  
-    pub bg_inode_bitmap_csum_hi : i16,/* crc32c(s_uuid+grp_num+ibitmap) BE */  
+    pub bg_block_bitmap_csum_hi : u16,/* crc32c(s_uuid+grp_num+bbitmap) BE */  
+    pub bg_inode_bitmap_csum_hi : u16,/* crc32c(s_uuid+grp_num+ibitmap) BE */  
     pub bg_reserved : u32  
 }
 
@@ -517,10 +817,10 @@ pub union Osd1 {
 #[repr(C)]
 pub struct Ext4SuperBlock
 {
-    pub s_inodes_count : i32,		/* Inodes count */
-    pub s_blocks_count_lo : i32,	/* Blocks count */
-    pub s_r_blocks_count_lo : i32,	/* Reserved blocks count */
-    pub s_free_blocks_count_lo : i32,	/* Free blocks count */
+    pub s_inodes_count : u32,		/* Inodes count */
+    pub s_blocks_count_lo : u32,	/* Blocks count */
+    pub s_r_blocks_count_lo : u32,	/* Reserved blocks count */
+    pub s_free_blocks_count_lo : u32,	/* Free blocks count */
     pub s_free_inodes_count : i32,	/* Free inodes count */
     pub s_first_data_block : i32,	/* First Data Block */
     pub s_log_block_size : i32,	/* Block size */
@@ -528,15 +828,15 @@ pub struct Ext4SuperBlock
     pub s_blocks_per_group : i32,	/* # Blocks per group */
     pub s_clusters_per_group : i32,	/* # Clusters per group */
     pub s_inodes_per_group : i32,	/* # Inodes per group */
-    pub s_mtime : i32,		/* Mount time */
-    pub s_wtime : i32,		/* Write time */
+    pub s_mtime : u32,		/* Mount time */
+    pub s_wtime : u32,		/* Write time */
     pub s_mnt_count : i16,		/* Mount count */
     pub s_max_mnt_count : i16,	/* Maximal mount count */
     pub s_magic : i16,		/* Magic signature */
     pub s_state : i16,		/* File system state */
     pub s_errors : i16,		/* Behaviour when detecting errors */
     pub s_minor_rev_level : i16,	/* minor revision level */
-    pub s_lastcheck : i32,		/* time of last check */
+    pub s_lastcheck : u32,		/* time of last check */
     pub s_checkinterval : i32,	/* max. time between checks */
     pub s_creator_os : i32,		/* OS */
     pub s_rev_level : i32,		/* Revision level */
@@ -585,12 +885,12 @@ pub struct Ext4SuperBlock
     pub s_desc_size : i16,		/* size of group descriptor */
     pub s_default_mount_opts : i32,
     pub s_first_meta_bg : i32,	/* First metablock block group */
-    pub s_mkfs_time : i32,		/* When the filesystem was created */
+    pub s_mkfs_time : u32,		/* When the filesystem was created */
     pub s_jnl_blocks : [i32; 17],	/* Backup of the journal inode */
         /* 64bit support valid if EXT4_FEATURE_INCOMPAT_64BIT */
-    pub s_blocks_count_hi : i32,	/* Blocks count */
-    pub s_r_blocks_count_hi : i32,	/* Reserved blocks count */
-    pub s_free_blocks_count_hi : i32,	/* Free blocks count */
+    pub s_blocks_count_hi : u32,	/* Blocks count */
+    pub s_r_blocks_count_hi : u32,	/* Reserved blocks count */
+    pub s_free_blocks_count_hi : u32,	/* Free blocks count */
     pub s_min_extra_isize : i16,	/* All inodes have at least # bytes */
     pub s_want_extra_isize : i16, 	/* New inodes should reserve # bytes */
     pub s_flags : i32,		/* Miscellaneous flags */

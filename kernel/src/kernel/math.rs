@@ -1,13 +1,12 @@
 use core::arch::asm;
-use core::ops::Add;
-use core::ops::Mul;
-use core::ops::Div;
 
-use crate::bochs_break;
+
 // pub fn upround<T>(num : T, rank : T) -> T where T: Div<T> + Mul<T> + Add<T>, <T as Div>::Output: Mul<T>
 // {
 //     (num / rank) * rank
 // }
+
+// pub fn power_of(n : )
 
 #[no_mangle]
 pub fn log2(mut x : f64) -> f64

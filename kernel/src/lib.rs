@@ -1,4 +1,5 @@
 #![no_main]
+#![feature(offset_of)]
 #![feature(ptr_metadata)]
 #![feature(int_roundings)]
 #![feature(const_trait_impl)]
@@ -13,3 +14,4 @@ extern crate alloc;
 pub mod kernel;
 pub mod fs;
 pub mod mm;
+pub mod crypto;
