@@ -40,7 +40,7 @@ pub static KMALLOC_INFO : [KMallocInfoStruct; KMALLOC_CACHES_NUM] =
 
 impl KMallocInfoStruct
 {
-    const fn new(name : &'static str, size : u32) -> KMallocInfoStruct
+    pub const fn new(name : &'static str, size : u32) -> KMallocInfoStruct
     {
         KMallocInfoStruct { name, size }
     }
@@ -259,6 +259,15 @@ impl KmemCache {
                 self.node[nid].lock.release(1);
                 return null_mut();
             }
+        }
+    }
+
+    pub fn link_to_cache_list(&mut self)
+    {
+        unsafe
+        {
+            self.set_next(SLAB_CACHES);
+            SLAB_CACHES = self as *mut Self;
         }
     }
 

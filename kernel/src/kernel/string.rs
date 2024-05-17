@@ -36,7 +36,7 @@ pub fn is_separator(c : c_char) -> bool
     c == '\\' as i8 || c == '/' as i8
 }
 
-pub unsafe fn strrsep(str : *const c_char) -> *mut c_char
+pub unsafe fn strsep(str : *const c_char) -> *mut c_char
 {
     let mut ptr = str as *mut c_char;
     let mut last = null_mut();

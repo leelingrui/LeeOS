@@ -13,6 +13,7 @@ use core::panic::PanicInfo;
 use lee_os::crypto::crc32c::{self, init_crc32};
 use lee_os::fs::file::init_filesystem;
 use lee_os::kernel::keyboard::keyboard_init;
+use lee_os::kernel::ramdisk::ramdisk_init;
 use lee_os::kernel::time::time_init;
 use lee_os::kernel::{console::console_init, global::gdt_init, interrupt::interrupt_init};
 use lee_os::fs::super_block::super_init;
@@ -24,6 +25,7 @@ use lee_os::kernel::process::process_init;
 use lee_os::kernel::syscall::syscall_init;
 use lee_os::kernel::fpu::fpu_init;
 use lee_os::mm::memory::init_memory;
+use lee_os::mm::shmem::init_shmem;
 use lee_os::{printk, bochs_break};
 use core::arch::asm;
 
@@ -33,7 +35,7 @@ global_asm!(include_str!("../kernel/entry.asm"));
 #[panic_handler]
 pub fn panic(_info: &PanicInfo) -> !
 {
-    printk!("{_info}\n");
+    printk!("{:#?}\n", _info);
     loop {
         
     }
@@ -48,6 +50,9 @@ unsafe fn kernel_init()
     gdt_init();
     interrupt_init();
     init_memory(0, core::ptr::null());
+    ramdisk_init();
+    init_shmem();
+    ide_init();
     tss_init();
     clock_init();
     init_filesystem();

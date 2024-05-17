@@ -4,7 +4,7 @@ use alloc::{alloc::{alloc, dealloc}, vec::Vec};
 
 use crate::{fs::file::{EOF, FS, FSType}, kernel::{buffer::{Buffer, self}, device::{DevT, device_ioctl, DEV_CMD_SECTOR_COUNT}, io::SECTOR_SIZE, math::{log2, pow}, sched::get_current_running_process, string::{is_separator, memset, EOS}, time::sys_time}, mm::memory::PAGE_SIZE, crypto::{crc16::crc16, crc32c::{crc32c_le, reverse32, reverse8}}};
 
-use super::{file::{DirEntry, GroupDesc, Inode, LogicalPart}, namei::FSPermission, super_block};
+use super::{dcache::DEntry, file::{DirEntry, FSPermission, FileMode, LogicalPart}, inode::Inode};
 
 
 
@@ -322,6 +322,62 @@ pub fn devmkfs(dev : DevT, mut icount : usize)
     }
 }
 
+pub fn ext4_load_all_entries(dentry : &mut DEntry, inode : &mut Inode)
+{
+    unsafe
+    {
+        assert!(is_dir((*((*inode).inode_desc_ptr as *mut Ext4Inode)).i_mode));
+        let sb = (*inode).logical_part_ptr;
+        let dir_size = (*inode).get_size();
+        let readable_buffer = alloc::alloc::alloc(Layout::from_size_align(dir_size, 1).unwrap()) as *mut c_void;
+        FS.read_inode(inode, readable_buffer, dir_size, 0);
+        let mut direntry_ptr = readable_buffer as *mut Ext4DirEntry2;
+        let mut offset = 0;
+        while dir_size > offset + (*direntry_ptr).rec_len as usize {
+            let name = String::from_raw_parts((*direntry_ptr).name.as_ptr() as *mut u8, (*direntry_ptr).name_len as usize, (*direntry_ptr).name_len as usize);
+            let inode = (*sb).get_inode((*direntry_ptr).inode as u64);
+            direntry_ptr = (direntry_ptr as *mut c_void).offset((*direntry_ptr).rec_len as isize) as *mut Ext4DirEntry2;
+            let child = dentry.new_child(&name);
+            (*child).d_inode = inode;
+            offset += (*direntry_ptr).rec_len as usize;
+        }
+        let name = String::from_raw_parts((*direntry_ptr).name.as_ptr() as *mut u8, (*direntry_ptr).name_len as usize, (*direntry_ptr).name_len as usize);
+        let inode = (*sb).get_inode((*direntry_ptr).inode as u64);
+        let child = dentry.new_child(&name);
+        (*child).d_inode = inode;
+        alloc::alloc::dealloc(readable_buffer as *mut u8, Layout::from_size_align((*inode).get_size(), 1).unwrap());
+    }
+
+}
+
+pub fn ext4_load_all_entries(dentry : &mut DEntry, inode : &mut Inode)
+{
+    unsafe
+    {
+        assert!(is_dir((*((*inode).inode_desc_ptr as *mut Ext4Inode)).i_mode));
+        let sb = (*inode).logical_part_ptr;
+        let dir_size = (*inode).get_size();
+        let readable_buffer = alloc::alloc::alloc(Layout::from_size_align(dir_size, 1).unwrap()) as *mut c_void;
+        FS.read_inode(inode, readable_buffer, dir_size, 0);
+        let mut direntry_ptr = readable_buffer as *mut Ext4DirEntry2;
+        let mut offset = 0;
+        while dir_size > offset + (*direntry_ptr).rec_len as usize {
+            let name = String::from_raw_parts((*direntry_ptr).name.as_ptr() as *mut u8, (*direntry_ptr).name_len as usize, (*direntry_ptr).name_len as usize);
+            let inode = (*sb).get_inode((*direntry_ptr).inode as u64);
+            direntry_ptr = (direntry_ptr as *mut c_void).offset((*direntry_ptr).rec_len as isize) as *mut Ext4DirEntry2;
+            let child = dentry.new_child(&name);
+            (*child).d_inode = inode;
+            offset += (*direntry_ptr).rec_len as usize;
+        }
+        let name = String::from_raw_parts((*direntry_ptr).name.as_ptr() as *mut u8, (*direntry_ptr).name_len as usize, (*direntry_ptr).name_len as usize);
+        let inode = (*sb).get_inode((*direntry_ptr).inode as u64);
+        let child = dentry.new_child(&name);
+        (*child).d_inode = inode;
+        alloc::alloc::dealloc(readable_buffer as *mut u8, Layout::from_size_align((*inode).get_size(), 1).unwrap());
+    }
+
+}
+
 pub fn ext4_find_entry(dir : &mut Inode, name : *const c_char, next : &mut *mut c_char, result_entry_ptr : &mut DirEntry)
 {
     unsafe
@@ -621,12 +677,25 @@ pub fn is_reg(f_mode : u16) -> bool
     f_mode & Ext4FileMode::IFMT.bits() == Ext4FileMode::IFREG.bits()
 }
 
+fn to_file_mode(file_mode : &Ext4FileMode) -> FileMode
+{
+    FileMode::from_bits(file_mode.bits()).unwrap()
+}
 
-#[inline(always)]
+#[inline]
 pub fn ext4_inode_format(inode : *mut Inode, buffer : *mut Buffer, logic_block_size : i32, nr : Idx)
 {
     unsafe {
+        let block_no = logical_part.get_inode_logical_block(nr) as usize;
+        let buffer = logical_part.read_block(block_no as usize);
+        (*inode).inode_block_buffer = buffer;
         (*inode).inode_desc_ptr = (*buffer).buffer.offset((256 * (nr - 1) % (1024 * logic_block_size as u64)).try_into().unwrap());
+        let desc = (*buffer).buffer.offset((256 * (nr - 1) % (1024 * logic_block_size as u64)).try_into().unwrap()) as *const Ext4Inode;
+        (*inode).i_mode = to_file_mode(&Ext4FileMode::from_bits((*desc).i_mode & Ext4FileMode::IFMT.bits()).unwrap());
+        (*inode).i_perm = FSPermission::from_bits((*desc).i_mode & FSPermission::MASK.bits()).unwrap();
+        (*inode).i_uid = (*desc).i_uid as u32;
+        (*inode).i_gid = (*desc).i_gid as u32;
+        (*inode).i_nlink = AtomicI64::new((*desc).i_links_count as i64);
     }
 }
 
@@ -749,7 +818,7 @@ pub struct Ext4Inode
     pub i_mtime : i32,
     pub i_dtime : i32,
     pub i_gid : i16,
-    pub i_links_coint : i16,
+    pub i_links_count : i16,
     pub i_blocks_lo : i32,
     pub i_flags : i32,
     pub osd1 : Osd1,

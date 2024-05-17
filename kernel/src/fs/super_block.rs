@@ -4,28 +4,13 @@ use crate::{logk, kernel::device::{get_device, DeviceType, DevT, DEV_NULL, self}
 
 use super::{file::early_disk_read, ext4::{Ext4DirEntry, Ext4DirEntry2}};
 
-static mut SUPER_TABLE : [Superblock; SUPER_NR] = [Superblock::empty(); SUPER_NR];
-#[derive(Clone, Copy)]
-struct Superblock
-{
-
-}
-
-
-impl Superblock {
-    const fn empty() -> Self
-    {
-        Self {  }
-    }
-}
-
 
 
 unsafe fn test_fs()
 {
     let root = FS.get_froot();
     let mut buffer = alloc::alloc::alloc(Layout::from_size_align_unchecked(4096, 1)) as *mut c_void;
-    let _read_size = FS.read_inode((*root).inode, buffer, 4096, 0);
+    let _read_size = FS.read_inode((*root).d_inode, buffer, 4096, 0);
     if _read_size != 0
     {
 

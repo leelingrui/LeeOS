@@ -1,12 +1,10 @@
 use alloc::alloc::{Layout, alloc, alloc_zeroed};
 use alloc::boxed::Box;
-use bitflags::Flag;
 use core::alloc::GlobalAlloc;
-use core::clone;
 use core::fmt::Display;
-use core::intrinsics::{log2f64, size_of};
+use core::intrinsics::size_of;
 use core::ops::Range;
-use core::ptr::{null_mut, null};
+use core::ptr::{addr_of_mut, null, null_mut};
 use core::{ffi::c_void, arch::asm, fmt};
 
 use bitfield::bitfield;
@@ -19,7 +17,7 @@ use crate::kernel::interrupt::set_interrupt_handler;
 use crate::kernel::{interrupt, sched};
 use crate::kernel::sched::get_current_running_process;
 use crate::mm::mm_type::PageFaultErrorCode;
-use crate::{printk, logk, bochs_break};
+use crate::{bochs_break, logk, printk};
 
 
 use crate::kernel::cpu;
@@ -36,7 +34,6 @@ pub static mut MEMORY_POOL : MemoryPool = MemoryPool::new();
 pub const PAGE_SHIFT : usize = 12;
 pub const PAGE_SIZE : usize = 1 << 12;
 pub const MAX_USER_STACK_SIZE : usize = 8 * 1024 * 1024;
-const MAX_ORDER : usize = 11;
 const KERNEL_START : usize = 0xffff800000100000;
 const VIRTADDR_START : usize = 0xffff800000000000;
 const PHYADDR_START : *mut c_void = 0x100000 as *mut c_void;
@@ -387,7 +384,7 @@ impl MemoryPool {
             match &page_frame
             {
                 None => {
-                    logk!("outof memory!");
+                    logk!("out of memory!");
                     return null_mut()
                 },
                 Some(start_frame) =>
@@ -409,17 +406,26 @@ impl MemoryPool {
         let memory_pool = MemoryPool{ mem_map : null_mut(), lowest_idx : 0, free_pages : 0, frame_allocator: null_mut() }; // kernel_vmem_pool: BuddySystem { bucket: [MemorySpan::new(); MAX_ORDER], lock: semaphore::SpinLock::new(1), current_vmemory: null_mut() } 
         memory_pool
     }
+
+    pub fn total_pages() -> usize
+    {
+        unsafe
+        {
+            MEMORY_DESCRIPTOR.all_pages
+        }
+    }
+
     fn init(&mut self, memory_descriptor : &mut MemoryDescriptor)
     {
         assert!(size_of::<slub::Slab>() == size_of::<page::Page>(), "all page descriptor must have same length");
         unsafe {
             // self.page_map.reset_bitmap(memory_descriptor.start.offset((get_kernel_size() + KERNEL_START) as isize) as *mut u8, MEMORY_DESCRIPTOR.all_pages);
             self.mem_map = (relocation::KERNEL_SIZE) as *mut page::Page;
-            self.free_pages = MEMORY_DESCRIPTOR.all_pages;
-            let mut pml4_position = relocation::KERNEL_SIZE + MEMORY_DESCRIPTOR.all_pages * size_of::<page::Page>(); // calculate PDPTE virtual position
+            self.free_pages = memory_descriptor.all_pages;
+            let mut pml4_position = relocation::KERNEL_SIZE + memory_descriptor.all_pages * size_of::<page::Page>(); // calculate PDPTE virtual position
             pml4_position = ((pml4_position / PAGE_SIZE) + ((pml4_position % PAGE_SIZE) != 0) as usize) * PAGE_SIZE;
             let used_page = (pml4_position - 0xffff800000100000) / PAGE_SIZE + 1;
-            compiler_builtins::mem::memset(self.mem_map as *mut u8, 0, size_of::<page::Page>() * MEMORY_DESCRIPTOR.all_pages);
+            compiler_builtins::mem::memset(self.mem_map as *mut u8, 0, size_of::<page::Page>() * memory_descriptor.all_pages);
             self.free_pages -= used_page;
             self.lowest_idx += used_page;
             self.init_pml4(pml4_position as *mut Pml4, pml4_position - KERNEL_START + 0x100000 + PAGE_SIZE, (KERNEL_START - 0x100000) as *mut c_void, 0x0 as *mut c_void);
@@ -691,7 +697,7 @@ impl MemoryPool {
 
 fn temporary_alloc_page_frame(num : usize) -> *mut c_void
 {
-    assert!(num == 1, " temporary alloc only allow 1 page per time");
+    assert!(num == 1, "temporary alloc only allow 1 page per time");
     unsafe { MEMORY_POOL.alloc_frame_temporary() }
 }
 
@@ -1097,7 +1103,8 @@ pub fn init_memory(magic : u32, address : *const c_void)
         get_page_size();
         printk!("total page num: {}\n", MEMORY_DESCRIPTOR.all_pages);
         printk!("kernel size: {}KB\n", get_kernel_size() / 1024);
-        MEMORY_POOL.init(&mut MEMORY_DESCRIPTOR);
+        bochs_break!();
+        MEMORY_POOL.init(&mut *addr_of_mut!(MEMORY_DESCRIPTOR));
         set_interrupt_handler(page_fault as interrupt::HandlerFn, interrupt::INTR_PF as u8);
         sched::RUNNING_PROCESS.resize(get_cpu_number(), null_mut());
     }
@@ -1232,7 +1239,7 @@ fn copy_on_write(vaddr : *const c_void)
     }
 }
 
-fn page_fault_page_exit(error : PageFaultErrorCode, vma : *mut VMAreaStruct, pg_fault_pos : *const c_void)
+fn page_fault_page_exist(error : PageFaultErrorCode, vma : *mut VMAreaStruct, pg_fault_pos : *const c_void)
 {
     unsafe
     {
@@ -1254,7 +1261,7 @@ fn page_fault_page_exit(error : PageFaultErrorCode, vma : *mut VMAreaStruct, pg_
 
 }
 
-fn page_fault_page_not_exit(error : PageFaultErrorCode, vma : *mut VMAreaStruct, pg_fault_pos : *const c_void)
+fn page_fault_page_not_exist(error : PageFaultErrorCode, vma : *mut VMAreaStruct, pg_fault_pos : *const c_void)
 {
     unsafe
     {
@@ -1269,6 +1276,7 @@ fn page_fault_page_not_exit(error : PageFaultErrorCode, vma : *mut VMAreaStruct,
                 {
                     panic!("unable read file block");
                 }
+                (*buff).dirty = true;
                 link_user_page_by_prot_bit(get_page_start(pg_fault_pos), virt2phys((*buff).buffer), (*vma).get_prot());
             }
             else {                
@@ -1296,10 +1304,10 @@ extern "C" fn page_fault(vector : u64, regs : PtRegs)
             Some(error) => 
             {
                 if error.contains(PageFaultErrorCode::PRESENT) {
-                    page_fault_page_exit(error, vma, pg_fault_pos);
+                    page_fault_page_exist(error, vma, pg_fault_pos);
                 }
                 else {
-                    page_fault_page_not_exit(error, vma, pg_fault_pos);
+                    page_fault_page_not_exist(error, vma, pg_fault_pos);
                 }
                 
             },

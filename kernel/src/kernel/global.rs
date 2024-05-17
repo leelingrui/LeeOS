@@ -109,18 +109,20 @@ pub fn get_gdt(no : isize) -> DescriptorT
     }
 }
 
-pub fn set_tss64(tss_ptr : &mut TaskStateSegment, rsp0 : u64, rsp1 : u64, rsp2 : u64, ist1 : u64, ist2 : u64, ist3 : u64, ist4 : u64, ist5 : u64, ist6 : u64, ist7 : u64)
+pub fn set_tss64(tss_ptr : *mut TaskStateSegment, rsp0 : u64, rsp1 : u64, rsp2 : u64, ist1 : u64, ist2 : u64, ist3 : u64, ist4 : u64, ist5 : u64, ist6 : u64, ist7 : u64)
 {
-    tss_ptr.rsp0 = rsp0;
-    tss_ptr.rsp1 = rsp1;
-    tss_ptr.rsp2 = rsp2;
-    tss_ptr.ist1 = ist1;
-    tss_ptr.ist2 = ist2;
-    tss_ptr.ist3 = ist3;
-    tss_ptr.ist4 = ist4;
-    tss_ptr.ist5 = ist5;
-    tss_ptr.ist6 = ist6;
-    tss_ptr.ist7 = ist7;
+    unsafe {
+        (*tss_ptr).rsp0 = rsp0;
+        (*tss_ptr).rsp1 = rsp1;
+        (*tss_ptr).rsp2 = rsp2;
+        (*tss_ptr).ist1 = ist1;
+        (*tss_ptr).ist2 = ist2;
+        (*tss_ptr).ist3 = ist3;
+        (*tss_ptr).ist4 = ist4;
+        (*tss_ptr).ist5 = ist5;
+        (*tss_ptr).ist6 = ist6;
+        (*tss_ptr).ist7 = ist7;     
+    }
 }
 
 pub fn tss_init()

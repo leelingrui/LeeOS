@@ -26,6 +26,8 @@ pub mod fork;
 pub mod keyboard;
 pub mod rtc;
 pub mod input;
+pub mod ramdisk;
+pub mod errno_base;
 
 pub type Off = usize;
 pub type Err = i64;

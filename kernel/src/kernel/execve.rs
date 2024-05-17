@@ -2,10 +2,11 @@ use core::ptr::null_mut;
 use core::{ffi::c_char, alloc::Layout, arch::asm};
 use core::ffi::c_void;
 
+use crate::fs::file::{FSPermission, FileFlag};
 use crate::kernel::process::MAX_PROCSEE_STACK_SIZE;
 use crate::kernel::relocation::process_relocation;
 use crate::mm::mm_type::MmapType;
-use crate::{mm::memory::{self, USER_STACK_TOP}, fs::{namei::{namei, permission, FSPermission}, file::{EOF, FS, sys_write, STDOUT}}, bochs_break, logk};
+use crate::{mm::memory::{self, USER_STACK_TOP}, fs::{namei::{namei, permission}, file::{EOF, FS, sys_write, STDOUT}}, bochs_break, logk};
 
 use super::{process::{PtRegs, interrupt_exit, PROCESS_NAME_LEN}, sched::get_current_running_process, elf64::load_elf64, syscall};
 
@@ -21,7 +22,7 @@ unsafe fn do_execve(file_name : *const c_char, argv : *mut *mut c_char, envp : *
 {
     let pcb = get_current_running_process();
     let pt_regs = ((*pcb).get_process_kernel_stack() as *mut PtRegs).offset(-1);
-    let file_t = namei(file_name);
+    let file_t = FS.open_file(file_name, FileFlag::empty());
     if file_t.is_null()
     {
         return EOF;
