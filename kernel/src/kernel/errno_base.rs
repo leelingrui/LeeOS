@@ -1,3 +1,7 @@
+use core::intrinsics::unlikely;
+
+use super::Err;
+
 pub const EPERM : i64 = 1;	/* Operation not permitted */
 pub const ENOENT : i64 = 2;	/* No such file or directory */
 pub const ESRCH : i64 = 3;	/* No such process */
@@ -32,3 +36,23 @@ pub const EMLINK : i64 = 31;	/* Too many links */
 pub const EPIPE : i64 = 32;	/* Broken pipe */
 pub const EDOM : i64 = 33;	/* Math argument out of domain of func */
 pub const ERANGE : i64 = 34;	/* Math result not representable */
+const MAX_ERRNO : i64 = 4095;
+
+
+#[inline(always)]
+pub fn is_err<T>(x : *mut T) -> bool
+{
+    unlikely((x as Err) >= -MAX_ERRNO)
+}
+
+#[inline(always)]
+pub fn ptr_err<T>(ptr : *mut T) -> Err
+{
+    ptr as Err
+}
+
+#[inline(always)]
+pub fn err_ptr<T>(err : Err) -> *mut T
+{
+    err as *mut T
+}

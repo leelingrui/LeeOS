@@ -5,7 +5,7 @@ use bitflags::Flags;
 
 use crate::{fs::ext4::{ext4_get_logic_block_idx, ext4_inode_desc_get}, kernel::{bitmap::BitMap, buffer::Buffer, console::CONSOLE, device::DevT, errno_base::{EEXIST, EFAULT, ENOMEM, EPERM}, list::ListHead, math::{self, pow}, process::{Gid, Uid, PCB}, sched::get_current_running_process, semaphore::RWLock, Err, Off}, mm::memory::PAGE_SIZE, printk};
 
-use super::{dcache::{DEntry, DEntryOperations}, ext4::{self, ext4_find_entry, ext4_inode_block_read, ext4_inode_read, ext4_match_name, Ext4DirEntry2, Ext4GroupDesc, Ext4Inode, Ext4SuperBlock, Idx}, fs::AddressSpace, inode::Inode, mnt_idmapping::MntIdmap, namei::{named, namei}};
+use super::{dcache::{DEntry, DEntryOperations}, ext4::{self, ext4_find_entry, ext4_inode_block_read, ext4_inode_read, ext4_match_name, Ext4DirEntry2, Ext4GroupDesc, Ext4Inode, Ext4SuperBlock, Idx}, fs::AddressSpace, inode::Inode, mnt_idmapping::MntIdmap, mount::Mount, namei::{named, namei}};
 pub static mut FS : FileSystem = FileSystem::new();
 
 
@@ -28,7 +28,6 @@ pub struct FileSystem
 {
     logical_part : BTreeMap<DevT, LogicalPart>,
     iroot : *mut DEntry,
-    imount : *mut DEntry,
     root_dev : DevT
 }
 
@@ -92,6 +91,13 @@ impl File {
 }
 
 impl FileSystem {
+    pub fn get_logical_part(&mut self, dev : DevT) -> *mut LogicalPart
+    {
+        match self.logical_part.get_mut(&dev) {
+            Some(logic_part) => logic_part as *mut LogicalPart,
+            None => null_mut(),
+        }
+    }
 
     pub fn read_inode_logic_block(&mut self, inode_t : *mut Inode, block_idx : Idx) -> *mut Buffer
     {
@@ -224,15 +230,12 @@ impl FileSystem {
 
     pub fn get_froot(&self) -> *mut DEntry
     {
-        unsafe {
-            self.iroot
-        }
-
+        self.iroot
     }
 
     const fn new() -> Self
     {
-        Self { logical_part: BTreeMap::new(), iroot: null_mut(), root_dev: 0, imount: null_mut() }
+        Self { logical_part: BTreeMap::new(), iroot: null_mut(), root_dev: 0 }
     }
 
     pub fn read_inode(&mut self, inode : *mut Inode, buffer : *mut c_void, len : usize, offset : Off) -> i64
@@ -280,30 +283,30 @@ impl FileSystem {
                 new_desc.data_block_start = new_desc.inode_table_offset as usize + math::upround((*sb).s_inodes_per_group as u64 * 256, new_sb.logic_block_size as u64 * 1024) as usize / (new_sb.logic_block_size as usize * 1024);
                 var += 1;
             }
-            // get root dir
-            self.iroot = self.get_file_by_inode_id(dev, 2, FileFlag::empty());
-            // self.imount = FS.get_file(dev, 2, FileFlag::empty());
-            // (*(*self.iroot).inode).mount = dev;
+            let root_dir = DEntry::empty(null_mut());
+            (*root_dir).d_inode = new_sb.get_inode(2);
+            new_sb.root_dir = root_dir;
+            self.iroot = root_dir;
         }
 
     }
 
-    pub fn get_file_by_inode_id(&mut self, dev : DevT, inode_idx : Idx, file_flag : FileFlag) -> *mut DEntry
-    {
-        unsafe
-        {
-            match self.logical_part.get_mut(&dev) {
-                Some(sb) => 
-                {
-                    let dentry = DEntry::empty(null_mut());
-                    let inode = sb.get_inode(inode_idx);
-                    (*dentry).d_inode = inode;
-                    dentry
-                },
-                None => null_mut(),
-            } 
-        }
-    }
+    // pub fn get_file_by_inode_id(&mut self, dev : DevT, inode_idx : Idx, file_flag : FileFlag) -> *mut DEntry
+    // {
+    //     unsafe
+    //     {
+    //         match self.logical_part.get_mut(&dev) {
+    //             Some(sb) => 
+    //             {
+    //                 let dentry = DEntry::empty(null_mut());
+    //                 let inode = sb.get_inode(inode_idx);
+    //                 (*dentry).d_inode = inode;
+    //                 dentry
+    //             },
+    //             None => null_mut(),
+    //         } 
+    //     }
+    // }
 
     fn load_group_desc(dev : DevT, idx : Idx) -> *mut Ext4GroupDesc
     {
@@ -373,7 +376,9 @@ pub struct LogicalPart
     pub inode_count : usize,
     pub data_map : BTreeMap<Idx, *mut Buffer>,
     pub inode_per_group : usize,
-    pub blocks_per_group : usize
+    pub blocks_per_group : usize,
+    pub root_dir : *mut DEntry,
+    pub sb_mount : *mut Mount,
 }
 
 #[derive(PartialEq)]
@@ -589,7 +594,7 @@ impl LogicalPart {
 
     pub fn new() -> Self
     {
-        Self { fs_type: FSType::None, super_block: null_mut(), group_desc: Vec::new(), logic_block_size: 0, logic_block_count: 0, inode_count: 0, dev: 0, inode_per_group: 0, data_map: BTreeMap::new(), blocks_per_group: 0, s_d_op: null_mut() }
+        Self { fs_type: FSType::None, super_block: null_mut(), group_desc: Vec::new(), logic_block_size: 0, logic_block_count: 0, inode_count: 0, dev: 0, inode_per_group: 0, data_map: BTreeMap::new(), blocks_per_group: 0, s_d_op: null_mut(), root_dir: null_mut(), sb_mount: null_mut() }
     }
 
     pub fn read_block(&self, logic_block_no : usize) -> *mut Buffer

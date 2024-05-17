@@ -1,9 +1,9 @@
-use core::{ffi::{c_char, c_void, CStr}, iter::empty, ptr::null_mut};
+use core::{ffi::{c_char, c_void, CStr}, intrinsics::unlikely, iter::empty, ptr::null_mut};
 use core::intrinsics::ptr_offset_from_unsigned;
 use alloc::string::String;
 
 use crate::kernel::{sched::get_current_running_process, string::{is_separator, strsep}};
-use super::{dcache::DEntry, file::{DirEntry, FSPermission, FSType, FileFlag, File, FS}, inode::Inode};
+use super::{dcache::{DEntry, DEntryFlags}, file::{DirEntry, FSPermission, FSType, File, FileFlag, FS}, inode::Inode, mount::search_mount};
 pub type Fd = usize;
 
 
@@ -69,6 +69,15 @@ pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut DEntry
         {
             let name_len = ptr_offset_from_unsigned(right, left) - 1;
             let name = String::from_raw_parts(*next as *mut u8, name_len, name_len);
+            if (*dentry_t).d_flags.contains(DEntryFlags::MOUNTED)
+            {
+                let mount = search_mount(dentry_t);
+                if unlikely(mount.is_null())
+                {
+                    return null_mut();
+                }
+                dentry_t = (*mount).mnt.mnt_root;
+            }
             dentry_t = (*dentry_t).look_up(&name);
             if dentry_t.is_null()
             {

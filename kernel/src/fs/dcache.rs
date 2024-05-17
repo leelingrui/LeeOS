@@ -56,8 +56,33 @@ pub struct QStr
     hash : u64
 }
 
+bitflags::bitflags! {
+    pub struct DEntryFlags : u32
+    {
+        const OP_HASH = 0x1;
+        const OP_COMPARE = 0x2;
+        const OP_REVALIDATE = 0x4;
+        const OP_DELETE = 0x8;
+        const OP_PRUNE = 0x10;
+        const DISCONNECTED = 0x20;
+        const REFERENED = 0x40;
+        const DONTCACHE = 0x80;
+        const CANT_MOUNT = 0x100;
+        const GENOCIDE = 0x200;
+        const SHRINK_LIST = 0x400;
+        const OP_WEAK_REVALIDATE = 0x800;
+        const NFSFS_RENAMED = 0x1000;
+        const FSNOTIFIY_PARENT_WATCHED = 0x2000;
+        const DENTRY_KILLED = 0x4000;
+        const MOUNTED = 0x8000;
+        const NEED_AUTOMOUNT = 0x10000;
+        const MANAGE_TRANSIT = 0x20000;
+    }
+}
+
 pub struct DEntry
 {
+    pub d_flags : DEntryFlags,
     pub d_seq : RWLock,
     pub d_sb : *mut LogicalPart,
     d_parent : *mut DEntry,
@@ -93,7 +118,7 @@ impl DEntry
         unsafe
         {
             let ptr = alloc::alloc::alloc(Layout::new::<Self>()) as *mut Self;
-            (*ptr) = Self { d_seq: RWLock::new(), d_parent: parent, d_inode: null_mut(), d_children: BTreeMap::new(), d_ref: AtomicI64::new(1), d_op: null_mut(), d_sb: null_mut() };
+            (*ptr) = Self { d_seq: RWLock::new(), d_parent: parent, d_inode: null_mut(), d_children: BTreeMap::new(), d_ref: AtomicI64::new(1), d_op: null_mut(), d_sb: null_mut(), d_flags: DEntryFlags::empty() };
             ptr
         }
     }

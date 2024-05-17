@@ -4,21 +4,6 @@ use crate::{logk, kernel::device::{get_device, DeviceType, DevT, DEV_NULL, self}
 
 use super::{file::early_disk_read, ext4::{Ext4DirEntry, Ext4DirEntry2}};
 
-static mut SUPER_TABLE : [Superblock; SUPER_NR] = [Superblock::empty(); SUPER_NR];
-#[derive(Clone, Copy)]
-struct Superblock
-{
-
-}
-
-
-impl Superblock {
-    const fn empty() -> Self
-    {
-        Self {  }
-    }
-}
-
 
 
 unsafe fn test_fs()
