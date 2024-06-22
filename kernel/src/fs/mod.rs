@@ -10,5 +10,9 @@ pub mod fs;
 pub mod mnt_idmapping;
 pub mod libfs;
 pub mod mount;
+pub mod fs_context;
+pub mod path;
+pub mod ns_common;
+pub mod ida;
 
 pub const PART_FS_EXTENDED : u32 = 5;

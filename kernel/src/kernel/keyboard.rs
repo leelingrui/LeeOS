@@ -1,5 +1,7 @@
 use core::{ffi::{c_char, c_void}, ptr::{null, null_mut}};
 
+use proc_macro::__init;
+
 use crate::{kernel::{interrupt::send_eoi, io::{inb, KEYBOARD_DATA_PORT, outb, KEYBOARD_CTRL_PORT}, input::{InputEvent, EV_KEY}}, logk, printk};
 
 use super::interrupt::{self, IRQ_KEYBOARD, set_interrupt_mask};
@@ -276,6 +278,7 @@ pub const KEY_MICMUTE : u16 = 248;	/* Mute / unmute the microphone */
 
 static mut KEY_STATUS : [bool; 256] = [false; 256];
 
+#[__init]
 pub fn keyboard_init()
 {
     unsafe

@@ -2,7 +2,8 @@ use core::{alloc::{GlobalAlloc, Layout}, arch::asm, cell::OnceCell, cmp, ffi::{c
 use core::intrinsics::{likely, unlikely};
 
 use alloc::{collections::{BinaryHeap, btree_map, LinkedList}, vec::Vec};
-use crate::{crypto::crc32c::init_crc32, fs::{dcache::DEntry, file::{File, FS}, namei::Fd, super_block::super_init}, kernel::{clock::clock_init, fpu::fpu_init, global::{set_tss64, KERNEL_TSS}, idle, interrupt::{self, interrupt_disable, set_interrupt_state}, io::ide_init, keyboard::keyboard_init, sched::{self, get_current_running_process, set_running_process}, syscall::syscall_init, time::time_init}, logk, mm::{memory::{get_cr3_reg, set_cr3_reg, Pml4, USER_STACK_TOP}, mm_type::{self, MmapType}}, printk};
+use proc_macro::__init;
+use crate::{crypto::crc32c::init_crc32, fs::{dcache::DEntry, file::{File, FS}, namei::Fd, path::Path, super_block::super_init}, kernel::{clock::clock_init, fpu::fpu_init, global::{set_tss64, KERNEL_TSS}, idle, interrupt::{self, interrupt_disable, set_interrupt_state}, io::ide_init, keyboard::keyboard_init, sched::{self, get_current_running_process, set_running_process}, syscall::syscall_init, time::time_init}, logk, mm::{memory::{get_cr3_reg, set_cr3_reg, Pml4, USER_STACK_TOP}, mm_type::{self, MmapType}}, printk};
 pub type Priority = u8;
 use crate::mm::memory;
 
@@ -79,8 +80,6 @@ fn init_thread()
 {
     logk!("kernel init!\n");
     time_init();
-    ide_init();
-    super_init();
     fpu_init();
     keyboard_init();
     init_crc32();
@@ -112,8 +111,8 @@ pub struct ProcessControlBlock
     pub pml4 : *mut memory::Pml4, // physical address
     pub wait_pid : Pid,
     pub blocked : u32,
-    pub iroot : *mut DEntry,
-    pub ipwd : *mut DEntry,
+    pub iroot : Path,
+    pub ipwd : Path,
     pub magic : u64
 }
 
@@ -164,6 +163,7 @@ pub unsafe fn schedule()
     }
 }
 
+#[__init]
 fn task_to_user_mode()
 {
     unsafe
@@ -227,14 +227,14 @@ impl ProcessControlBlock {
         return var;
     }
 
-    pub fn get_iroot(&mut self) -> *mut DEntry
+    pub fn get_iroot(&mut self) -> Path
     {
-        self.iroot   
+        self.iroot.clone()
     }
 
-    pub fn get_ipwd(&mut self) -> *mut DEntry
+    pub fn get_ipwd(&mut self) -> Path
     {
-        self.ipwd
+        self.ipwd.clone()
     }
 
     pub fn build_task_stack(&mut self)
@@ -271,7 +271,7 @@ impl ProcessControlBlock {
             {
                 panic!("system out of memory!");
             }
-            (*result) = ProcessControlBlock { priority: 0, jiffies: 0, name: [0; PROCESS_NAME_LEN], uid: 0, gid: 0, pid: 0, ppid: 0, pgid: 0, pml4: null_mut(), wait_pid: 0, blocked: 0, mm: mm_type::MMStruct::new(result), stack: null_mut(), iroot: null_mut(), ipwd: null_mut(), files: Vec::new(), magic: 0x55aa55aa55aa55aa };
+            (*result) = ProcessControlBlock { priority: 0, jiffies: 0, name: [0; PROCESS_NAME_LEN], uid: 0, gid: 0, pid: 0, ppid: 0, pgid: 0, pml4: null_mut(), wait_pid: 0, blocked: 0, mm: mm_type::MMStruct::new(result), stack: null_mut(), iroot: Path::empty(), ipwd: Path::empty(), files: Vec::new(), magic: 0x55aa55aa55aa55aa };
             result
         }
     }
@@ -342,7 +342,7 @@ impl ProcessControlBlock {
 }
 
 
-
+#[__init]
 pub fn process_init()
 {
     unsafe

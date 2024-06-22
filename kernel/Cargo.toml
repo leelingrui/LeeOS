@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 
+
+proc_macro = {path = "../proc_macro"}
 bitfield = "0.14.0"
 bitflags = "2.5.0"
 buddy_system_allocator = "0.9"

@@ -1,5 +1,7 @@
 use core::time;
 
+use proc_macro::__init;
+
 use crate::{logk, printk};
 
 use super::{rtc::RealTimeClock, io::{CMOS_SECOND, CMOS_MINUTE, CMOS_HOUR, CMOS_DAY, CMOS_MONTH, CMOS_YEAR, CMOS_WEEKDAY, CMOS_CENTURY}, clock::{JIFFIES, JIFFY}};
@@ -150,7 +152,7 @@ pub fn sys_time() -> Time
     }
 }
 
-
+#[__init]
 pub fn time_init()
 {
     unsafe

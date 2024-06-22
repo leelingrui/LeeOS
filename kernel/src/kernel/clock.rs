@@ -1,4 +1,6 @@
 use core::arch::asm;
+use proc_macro::__init;
+
 use crate::{logk, kernel::{sched, process::{self, PtRegs}}};
 
 use super::{io::{self, outb, inb}, interrupt::{self, IRQ_CLOCK}};
@@ -43,6 +45,7 @@ fn pit_init()
     io::outb(PIT_CHAN2_REG, ((BEEP_COUNTER >> 8) & 0xff).try_into().unwrap());
 }
 
+#[__init]
 pub fn clock_init()
 {
     pit_init();

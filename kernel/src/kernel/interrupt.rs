@@ -1,5 +1,6 @@
 use core::{arch::{asm, global_asm}, default, fmt};
 use bitfield::{bitfield, size_of};
+use proc_macro::__init;
 
 use crate::{printk, kernel::io::inb, logk, bochs_break};
 
@@ -115,6 +116,7 @@ impl fmt::Display for DescriptorT {
     }
 }
 
+#[__init]
 fn init_8259a()
 {
     outb(PIC_M_CTRL, 0b00010001); // ICW1: 边沿触发, 级联 8259, 需要ICW4.
@@ -262,6 +264,7 @@ unsafe fn exception_handler(vector : u32, regs : process::PtRegs)
     bochs_break!();
 }
 
+#[__init]
 fn idt_init()
 {
     unsafe
@@ -302,6 +305,7 @@ pub fn interrupt_disable() -> bool
     }
 }
 
+#[__init]
 pub fn interrupt_init()
 {
     init_8259a();

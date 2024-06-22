@@ -1,4 +1,6 @@
 use core::{arch::asm, ptr::null_mut};
+use proc_macro::__init;
+
 use crate::{logk, kernel::{cpu::{set_cr0, get_cr0, Cr0RegLabel}, interrupt::HandlerFn, sched}, bochs_break};
 
 use super::{cpu, process::{self, PCB}, interrupt};
@@ -25,6 +27,7 @@ fn fpu_enable()
 
 }
 
+#[__init]
 fn fpu_check() -> bool
 {
     let cpuid = cpu::__cpuid(cpu::EXTENDED_PROCESSOR_SIGNATURE_AND_FEATURE);
@@ -56,6 +59,7 @@ fn fpu_check() -> bool
     }
 }
 
+#[__init]
 pub fn fpu_init()
 {
     logk!("initial fpu\n");

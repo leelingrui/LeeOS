@@ -52,3 +52,19 @@ pub unsafe fn strsep(str : *const c_char) -> *mut c_char
         ptr = ptr.offset(1);
     }
 }
+
+pub unsafe fn strchr(mut __s : *const c_char, __c : c_char) -> *mut c_char
+{
+    loop {
+        if *__s == __c
+        {
+            break;
+        }
+        if *__s == '\0' as c_char
+        {
+            return null_mut();
+        }
+        __s = __s.offset(1);
+    }
+    return  __s as *mut c_char;
+}

@@ -1,5 +1,7 @@
 use core::{ptr::null_mut, ffi::{c_void, c_char}};
-use crate::{fs::file::sys_write, logk, kernel::{process::{self, sys_yield}, fork::sys_fork, sched::get_current_running_process}, bochs_break};
+use proc_macro::__init;
+
+use crate::{bochs_break, fs::file::sys_write, kernel::{fork::sys_fork, process::{self, sys_yield}, sched::get_current_running_process, syscall_defs::{__NR_FORK, __NR_SCHED_YIELD, __NR_WRITE}}, logk};
 
 use super::{cpu, process::PtRegs, interrupt::HANDLER_TABLE};
 use core::arch::asm;
@@ -10,121 +12,13 @@ extern "C"
     fn _syscall_start();
 } 
 
-pub const __NR_READ : usize = 0;
-pub const __NR_WRITE : usize = 1;
-pub const __NR_SCHED_YIELD : usize = 24;
-pub const __NR_FORK : usize = 57;
+
 #[no_mangle]
 pub static mut SYSTEM_CALL_TABLE : [SyscallrFn; 256] = [unsafe { core::mem::transmute::<*mut(), SyscallrFn>(default_syscall as *mut()) }; 256];
-
-#[inline(always)]
-pub unsafe fn __syscall0(nr : usize) -> usize
-{
-    let result;
-    asm!(
-        "syscall",
-        in("rax") nr,
-        lateout("rax") result
-    );
-    result
-}
-
-#[inline(always)]
-pub unsafe fn __syscall1(nr : usize, arg1 : u64) -> usize
-{
-    let result;
-    asm!(
-        "syscall",
-        in("rax") nr,
-        in("rdi") arg1,
-        lateout("rax") result
-    );
-    result
-}
-
-#[inline(always)]
-pub unsafe fn __syscall2(nr : usize, arg1 : u64, arg2 : u64) -> usize
-{
-    let result;
-    asm!(
-        "syscall",
-        in("rax") nr,
-        in("rdi") arg1,
-        in("rsi") arg2,
-        lateout("rax") result
-    );
-    result
-}
-
-#[inline(always)]
-pub unsafe fn __syscall3(nr : usize, arg1 : u64, arg2 : u64, arg3 : u64) -> usize
-{
-    let result;
-    asm!(
-        "syscall",
-        in("rax") nr,
-        in("rdi") arg1,
-        in("rsi") arg2,
-        in("rdx") arg3,
-        lateout("rax") result
-    );
-    result
-}
 
 pub unsafe fn default_syscall()
 {
     logk!("bad syscall");
-}
-
-#[inline(always)]
-pub unsafe fn __syscall4(nr : usize, arg1 : u64, arg2 : u64, arg3 : u64, arg4 : u64) -> usize
-{
-    let result;
-    asm!(
-        "syscall",
-        in("rax") nr,
-        in("rdi") arg1,
-        in("rsi") arg2,
-        in("rdx") arg3,
-        in("r10") arg4,
-        lateout("rax") result
-    );
-    result
-}
-
-#[inline(always)]
-pub unsafe fn __syscall5(nr : usize, arg1 : u64, arg2 : u64, arg3 : u64, arg4 : u64, arg5 : u64) -> usize
-{
-    let result;
-    asm!(
-        "syscall",
-        in("rax") nr,
-        in("rdi") arg1,
-        in("rsi") arg2,
-        in("rdx") arg3,
-        in("r10") arg4,
-        in("r8") arg5,
-        lateout("rax") result
-    );
-    result
-}
-
-#[inline(always)]
-pub unsafe fn __syscall6(nr : usize, arg1 : u64, arg2 : u64, arg3 : u64, arg4 : u64, arg5 : u64, arg6 : u64) -> usize
-{
-    let result;
-    asm!(
-        "syscall",
-        in("rax") nr,
-        in("rdi") arg1,
-        in("rsi") arg2,
-        in("rdx") arg3,
-        in("r10") arg4,
-        in("r8") arg5,
-        in("r9") arg6,
-        lateout("rax") result
-    );
-    result
 }
 
 pub unsafe fn set_syscall_return_value(ret : u64)
@@ -165,6 +59,7 @@ pub unsafe fn syscall_function(pt_regs : PtRegs)
     );
 }
 
+#[__init]
 pub fn syscall_init()
 {
     // cpu::wrmsr(0x174, 0x8);

@@ -2,41 +2,67 @@ use core::intrinsics::unlikely;
 
 use super::Err;
 
-pub const EPERM : i64 = 1;	/* Operation not permitted */
-pub const ENOENT : i64 = 2;	/* No such file or directory */
-pub const ESRCH : i64 = 3;	/* No such process */
-pub const EINTR : i64 = 4;	/* Interrupted system call */
-pub const EIO : i64 = 5;	/* I/O error */
-pub const ENXIO : i64 = 6;	/* No such device or address */
-pub const E2BIG : i64 = 7;	/* Argument list too long */
-pub const ENOEXEC : i64 = 8;	/* Exec format error */
-pub const EBADF : i64 = 9;	/* Bad file number */
-pub const ECHILD : i64 = 10;	/* No child processes */
-pub const EAGAIN : i64 = 11;	/* Try again */
-pub const ENOMEM : i64 = 12;	/* Out of memory */
-pub const EACCES : i64 = 13;	/* Permission denied */
-pub const EFAULT : i64 = 14;	/* Bad address */
-pub const ENOTBLK : i64 = 15;	/* Block device required */
-pub const EBUSY : i64 = 16;	/* Device or resource busy */
-pub const EEXIST : i64 = 17;	/* File exists */
-pub const EXDEV : i64 = 18;	/* Cross-device link */
-pub const ENODEV : i64 = 19;	/* No such device */
-pub const ENOTDIR : i64 = 20;	/* Not a directory */
-pub const EISDIR : i64 = 21;	/* Is a directory */
-pub const EINVAL : i64 = 22;	/* Invalid argument */
-pub const ENFILE : i64 = 23;	/* File table overflow */
-pub const EMFILE : i64 = 24;	/* Too many open files */
-pub const ENOTTY : i64 = 25;	/* Not a typewriter */
-pub const ETXTBSY : i64 = 26;	/* Text file busy */
-pub const EFBIG : i64 = 27;	/* File too large */
-pub const ENOSPC : i64 = 28;	/* No space left on device */
-pub const ESPIPE : i64 = 29;	/* Illegal seek */
-pub const EROFS : i64 = 30;	/* Read-only file system */
-pub const EMLINK : i64 = 31;	/* Too many links */
-pub const EPIPE : i64 = 32;	/* Broken pipe */
-pub const EDOM : i64 = 33;	/* Math argument out of domain of func */
-pub const ERANGE : i64 = 34;	/* Math result not representable */
-const MAX_ERRNO : i64 = 4095;
+pub const EPERM : Err = 1;	/* Operation not permitted */
+pub const ENOENT : Err = 2;	/* No such file or directory */
+pub const ESRCH : Err = 3;	/* No such process */
+pub const EINTR : Err = 4;	/* Interrupted system call */
+pub const EIO : Err = 5;	/* I/O error */
+pub const ENXIO : Err = 6;	/* No such device or address */
+pub const E2BIG : Err = 7;	/* Argument list too long */
+pub const ENOEXEC : Err = 8;	/* Exec format error */
+pub const EBADF : Err = 9;	/* Bad file number */
+pub const ECHILD : Err = 10;	/* No child processes */
+pub const EAGAIN : Err = 11;	/* Try again */
+pub const ENOMEM : Err = 12;	/* Out of memory */
+pub const EACCES : Err = 13;	/* Permission denied */
+pub const EFAULT : Err = 14;	/* Bad address */
+pub const ENOTBLK : Err = 15;	/* Block device required */
+pub const EBUSY : Err = 16;	/* Device or resource busy */
+pub const EEXIST : Err = 17;	/* File exists */
+pub const EXDEV : Err = 18;	/* Cross-device link */
+pub const ENODEV : Err = 19;	/* No such device */
+pub const ENOTDIR : Err = 20;	/* Not a directory */
+pub const EISDIR : Err = 21;	/* Is a directory */
+pub const EINVAL : Err = 22;	/* Invalid argument */
+pub const ENFILE : Err = 23;	/* File table overflow */
+pub const EMFILE : Err = 24;	/* Too many open files */
+pub const ENOTTY : Err = 25;	/* Not a typewriter */
+pub const ETXTBSY : Err = 26;	/* Text file busy */
+pub const EFBIG : Err = 27;	/* File too large */
+pub const ENOSPC : Err = 28;	/* No space left on device */
+pub const ESPIPE : Err = 29;	/* Illegal seek */
+pub const EROFS : Err = 30;	/* Read-only file system */
+pub const EMLINK : Err = 31;	/* Too many links */
+pub const EPIPE : Err = 32;	/* Broken pipe */
+pub const EDOM : Err = 33;	/* Math argument out of domain of func */
+pub const ERANGE : Err = 34;	/* Math result not representable */
+
+
+pub const ERESTARTSYS : Err = 512;
+pub const ERESTARTNOINTR : Err = 513;
+pub const ERESTARTNOHAND : Err = 514;	/* restart if no handler.. */
+pub const ENOIOCTLCMD : Err = 515;	/* No ioctl command */
+pub const ERESTART_RESTARTBLOCK : Err = 516; /* restart by calling sys_restart_syscall */
+pub const EPROBE_DEFER : Err = 517;	/* Driver requests probe retry */
+pub const EOPENSTALE : Err = 518;	/* open found a stale dentry */
+pub const ENOPARAM : Err = 519;	/* Parameter not supported */
+
+/* Defined for the NFSv3 protocol */
+pub const EBADHANDLE : Err = 521;	/* Illegal NFS file handle */
+pub const ENOTSYNC : Err = 522;	/* Update synchronization mismatch */
+pub const EBADCOOKIE : Err = 523;	/* Cookie is stale */
+pub const ENOTSUPP : Err = 524;	/* Operation is not supported */
+pub const ETOOSMALL : Err = 525;	/* Buffer or request is too small */
+pub const ESERVERFAULT : Err = 526;	/* An untranslatable error occurred */
+pub const EBADTYPE : Err = 527;	/* Type not supported by server */
+pub const EJUKEBOX : Err = 528;	/* Request initiated, but will not complete before timeout */
+pub const EIOCBQUEUED : Err = 529;	/* iocb queued, will get completion event */
+pub const ERECALLCONFLICT : Err = 530;	/* conflict with recalled state */
+pub const ENOGRACE : Err = 531;	/* NFS file lock reclaim refused */
+
+
+
+const MAX_ERRNO : Err = 4095;
 
 
 #[inline(always)]

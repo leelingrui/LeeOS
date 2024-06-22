@@ -3,7 +3,7 @@ use alloc::{collections::BTreeMap, string::{String, ToString}};
 
 use crate::kernel::semaphore::RWLock;
 
-use super::{file::{LogicalPart, FS}, inode::Inode};
+use super::{file::{FileMode, LogicalPart, FS}, inode::Inode};
 
 
 pub type RevalidateFunc = fn(*mut DEntry, u32) -> i64;
@@ -88,16 +88,32 @@ pub struct DEntry
     d_parent : *mut DEntry,
     pub d_inode : *mut Inode,
     d_children : BTreeMap<String, *mut DEntry>,
-    d_ref : AtomicI64,
+    pub d_ref : AtomicI64,
     pub d_op : *mut DEntryOperations
 }
 
 
 impl DEntry
 {
-    pub fn dget(&mut self)
+    pub fn dget(&mut self) -> *mut Self
     {
         self.d_ref.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        self
+    }
+
+    pub const fn is_dir(&self) -> bool
+    {
+        unsafe
+        {
+            (*self.d_inode).is_dir()
+        }
+    }
+
+    pub const fn is_symlink(&self) -> bool
+    {
+        unsafe {            
+            (*self.d_inode).is_symlink()
+        }
     }
 
     pub fn dput(&mut self)

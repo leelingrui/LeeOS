@@ -1,6 +1,7 @@
 use core::{ffi::{c_void, CStr, c_char}, alloc::Layout};
 
 use alloc::{vec::Vec, alloc::alloc, string::String};
+use proc_macro::__init;
 
 use crate::{fs::ext4::Idx, mm::memory::PAGE_SIZE};
 
@@ -75,6 +76,7 @@ impl RamDisk {
     }
 }
 
+#[__init]
 pub fn ramdisk_init()
 {
     unsafe

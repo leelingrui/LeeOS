@@ -2,9 +2,9 @@ $(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
 	$(BUILD)/boot/loader.asm.bin \
 	./utils/master.sfdisk \
 	$(BUILD)/x86_64-unknown-none/debug/lee_os $(BUILD)/system.map \
-	$(BUILTIN_APP)
+	$(BUILTIN_APP) ./utils/image.mk
 # 创建磁盘镜像
-	yes | bximage -q -hd=32 -func=create -sectsize=512 -imgmode=flat $@
+	yes | bximage -q -hd=128 -func=create -sectsize=512 -imgmode=flat $@
 	dd if=$(BUILD)/boot/boot.asm.bin of=$@ bs=512 count=1 conv=notrunc
 	dd if=$(BUILD)/boot/loader.asm.bin of=$@ bs=512 count=4 seek=2 conv=notrunc
 	dd if=$(BUILD)/x86_64-unknown-none/debug/lee_os of=$@ bs=512 seek=10 conv=notrunc
@@ -30,7 +30,7 @@ $(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
 	sudo umount /mnt/LeeOSDisk
 	sudo losetup -d /dev/loop0
 
-$(BUILD)/slave.img: ./utils/slave.sfdisk
+$(BUILD)/slave.img: ./utils/slave.sfdisk ./utils/image.mk
 
 # 创建一个 32M 的硬盘镜像
 	yes | bximage -q -hd=32 -func=create -sectsize=512 -imgmode=flat $@
