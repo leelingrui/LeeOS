@@ -196,7 +196,18 @@ fn task_to_user_mode()
         execve::sys_execve("bin/init\0".as_ptr() as *const c_char, null_mut(), null_mut());
         panic!("exec /bin/init failure")
     }
+}
 
+pub fn sys_exit(error_code : i64)
+{
+    do_exit(error_code);
+}
+
+fn do_exit(error_code : i64)
+{
+    let pcb = get_current_running_process();
+    PCB::distory_task_control_block(pcb);
+    sys_yield();
 }
 
 impl ProcessControlBlock {

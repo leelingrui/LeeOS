@@ -14,6 +14,7 @@ pub const __NR_READ : usize = 0;
 pub const __NR_WRITE : usize = 1;
 pub const __NR_SCHED_YIELD : usize = 24;
 pub const __NR_FORK : usize = 57;
+pub const __NR_EXIT : usize = 60;
 #[no_mangle]
 pub static mut SYSTEM_CALL_TABLE : [SyscallrFn; 256] = [unsafe { core::mem::transmute::<*mut(), SyscallrFn>(default_syscall as *mut()) }; 256];
 

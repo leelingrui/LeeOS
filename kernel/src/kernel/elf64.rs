@@ -283,7 +283,7 @@ fn elf64_validate(ehdr : *const Elf64Ehdr) -> bool
     unsafe
     {
         // 不是 ELF 文件
-        if (compiler_builtins::mem::memcmp(&(*ehdr).e_ident as *const i8 as *const u8, [0x7f, 0x45, 0x4c, 0x46, 02, 01, 01, 00, 00, 00, 00, 00, 00, 00, 00, 00].as_ptr(), 7)) != 0
+        if (*ehdr).e_ident != [0x7f, 0x45, 0x4c, 0x46, 02, 01, 01, 00, 00, 00, 00, 00, 00, 00, 00, 00]
         {
             return false;
         }

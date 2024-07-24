@@ -4,17 +4,17 @@ $(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
 	$(BUILD)/x86_64-unknown-none/debug/lee_os $(BUILD)/system.map \
 	$(BUILTIN_APP)
 # 创建磁盘镜像
-	yes | bximage -q -hd=32 -func=create -sectsize=512 -imgmode=flat $@
+	yes | bximage -q -hd=64 -func=create -sectsize=512 -imgmode=flat $@
 	dd if=$(BUILD)/boot/boot.asm.bin of=$@ bs=512 count=1 conv=notrunc
 	dd if=$(BUILD)/boot/loader.asm.bin of=$@ bs=512 count=4 seek=2 conv=notrunc
 	dd if=$(BUILD)/x86_64-unknown-none/debug/lee_os of=$@ bs=512 seek=10 conv=notrunc
 
 	sfdisk $@ < ./utils/master.sfdisk
-	sudo losetup /dev/loop0 --partscan $@
+	sudo losetup /dev/loop5 --partscan $@
 
-	sudo mkfs.ext4 -c /dev/loop0p1
+	sudo mkfs.ext4 -c /dev/loop5p1
 
-	sudo mount /dev/loop0p1 /mnt/LeeOSDisk
+	sudo mount /dev/loop5p1 /mnt/LeeOSDisk
 
 	sudo chown ${USER} /mnt/LeeOSDisk
 
@@ -28,7 +28,7 @@ $(BUILD)/master.img: $(BUILD)/boot/boot.asm.bin \
 	done
 
 	sudo umount /mnt/LeeOSDisk
-	sudo losetup -d /dev/loop0
+	sudo losetup -d /dev/loop5
 
 $(BUILD)/slave.img: ./utils/slave.sfdisk
 
@@ -36,13 +36,13 @@ $(BUILD)/slave.img: ./utils/slave.sfdisk
 	yes | bximage -q -hd=32 -func=create -sectsize=512 -imgmode=flat $@
 
 # 挂载设备
-	sudo losetup /dev/loop0 --partscan $@
+	sudo losetup /dev/loop5 --partscan $@
 
 # 创建 ext4 文件系统
-	sudo mkfs.ext4 -c /dev/loop0
+	sudo mkfs.ext4 -c /dev/loop5
 
 # 挂载文件系统
-	sudo mount /dev/loop0 /mnt/LeeOSDisk
+	sudo mount /dev/loop5 /mnt/LeeOSDisk
 
 # 切换所有者
 	sudo chown ${USER} /mnt/LeeOSDisk
@@ -54,7 +54,7 @@ $(BUILD)/slave.img: ./utils/slave.sfdisk
 	sudo umount /mnt/LeeOSDisk
 
 # 卸载设备
-	sudo losetup -d /dev/loop0
+	sudo losetup -d /dev/loop5
 
 IMAGES:= $(BUILD)/master.img $(BUILD)/slave.img
 image: $(IMAGES)

@@ -1,11 +1,11 @@
 use core::sync::atomic;
-
-use super::process::sys_yield;
-
+use alloc::collections::BTreeMap;
+use super::process::{sys_yield, PCB};
+use super::sched::get_current_running_process;
 
 pub struct  SpinLock
 {
-    counting : atomic::AtomicI64
+    counting : atomic::AtomicI64,
 }
 
 impl Default for SpinLock {
@@ -16,7 +16,7 @@ impl Default for SpinLock {
 
 pub struct RWLock
 {
-    reader_num : u64,
+    readers : BTreeMap<*const PCB, i64>,
     change_mutex : SpinLock,
     writer_mutex : SpinLock
 }
@@ -24,13 +24,28 @@ pub struct RWLock
 impl RWLock {
     pub fn new() -> Self
     {
-        Self { reader_num: 0, change_mutex: SpinLock::new(1), writer_mutex: SpinLock::new(1) }
+        Self { readers: BTreeMap::new(), change_mutex: SpinLock::new(1), writer_mutex: SpinLock::new(1) }
     }
 
     pub fn rdunlock(&mut self)
     {
         self.change_mutex.acquire(1);
-        self.reader_num -= 1;
+        let pcb = get_current_running_process().cast_const();
+        match self.readers.get_mut(&pcb)
+        {
+            Some(container) => 
+            {
+                *container -= 1;
+                if *container == 0
+                {
+                    self.readers.remove(&pcb);
+                }
+            },
+            None =>
+            {
+                panic!("you can't unlock from other thread!");
+            }
+        }
         self.change_mutex.release(1);
     }
 
@@ -44,7 +59,18 @@ impl RWLock {
     {
         self.writer_mutex.acquire(1);
         self.change_mutex.acquire(1);
-        self.reader_num += 1;
+        let pcb = get_current_running_process().cast_const();
+        match self.readers.get_mut(&pcb)
+        {
+            Some(container) => 
+            {
+                *container += 1;
+            },
+            None =>
+            {
+                self.readers.insert(pcb, 1);
+            }
+        }
         self.change_mutex.release(1);
         self.writer_mutex.release(1);
     }
@@ -54,9 +80,18 @@ impl RWLock {
         self.writer_mutex.acquire(1);
         loop {
             self.change_mutex.acquire(1);
-            if self.reader_num == 0
+            let pcb = get_current_running_process().cast_const();
+            match self.readers.get_mut(&pcb)
             {
-                break;
+                Some(_) =>
+                {
+                    if self.readers.len() == 1
+                    {
+                        break;
+                    }
+                    sys_yield();
+                },
+                None => break
             }
             self.change_mutex.release(1);
             sys_yield();
@@ -85,6 +120,10 @@ impl SpinLock
                     Err(current) => expect = current,
                 }
             }
+            else
+            {
+                expect = self.counting.load(atomic::Ordering::Acquire);
+            }
         }
     }
 
@@ -94,7 +133,7 @@ impl SpinLock
         {
             panic!()
         }
-        let mut expect = self.counting.load(atomic::Ordering::Acquire);;
+        let mut expect = self.counting.load(atomic::Ordering::Acquire);
         loop
         {
             match self.counting.compare_exchange_weak(expect, expect + cnt, atomic::Ordering::Release, atomic::Ordering::Relaxed)

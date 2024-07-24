@@ -1,6 +1,6 @@
 use core::ffi::c_char;
 
-use lee_os::{kernel::{syscall::{__NR_WRITE, __syscall3, __syscall0, __NR_FORK}, process::Pid}, fs};
+use lee_os::{kernel::{syscall::{__NR_WRITE, __syscall3, __syscall1, __syscall0, __NR_FORK, __NR_EXIT}, process::Pid}, fs};
 
 pub fn write(fd : fs::file::FileDescriptor, buf : *const c_char, count : usize) -> usize
 {
@@ -14,5 +14,13 @@ pub fn fork() -> Pid
     unsafe
     {
         __syscall0(__NR_FORK) as Pid
+    }
+}
+
+pub fn exit(error_code : i64)
+{
+    unsafe
+    {
+        __syscall1(__NR_EXIT, error_code);
     }
 }

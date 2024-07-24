@@ -65,7 +65,8 @@ qemug:  $(IMAGES)
 	-audiodev wav,id=hda \
 	-machine pcspk-audiodev=hda \
 	-chardev stdio,mux=on,id=com1 \
-	-serial chardev:com1
+	-serial chardev:com1 \
+	-vnc 0:0
 
 .PHONY: qemu
 qemu:  $(IMAGES)

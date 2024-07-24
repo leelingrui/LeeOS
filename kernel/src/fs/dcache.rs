@@ -111,14 +111,10 @@ impl DEntry
                 None => 
                 if self.d_children.is_empty() && (*self.d_inode).is_dir()
                 {
-                    self.d_seq.rdunlock();
-                    self.d_seq.wrlock();
                     if self.d_children.is_empty()
                     {
                         (*self.d_inode).load_entrys(addr_of_mut!(*self));
                     }
-                    self.d_seq.wrunlock();
-                    self.d_seq.rdlock();
                     match self.d_children.get(name)
                     {
                         Some(child) => *child,
