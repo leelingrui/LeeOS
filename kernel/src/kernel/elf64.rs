@@ -232,7 +232,7 @@ pub struct Elf64Ehdr
     pub e_shstrndx : u16
 }
 
-#[repr(align(1))]
+#[repr(packed)]
 #[repr(C)]
 pub struct Elf64Phdr
 {
@@ -245,7 +245,7 @@ pub struct Elf64Phdr
     pub p_memsz : u64,		/* Segment size in memory */
     pub p_align : u64		/* Segment alignment */
 }
-#[repr(align(1))]
+#[repr(packed)]
 #[repr(C)]
 pub struct Elf64Shdr
 {

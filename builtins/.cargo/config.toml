@@ -1,0 +1,7 @@
+[build]
+target = "../x86_64-unknown-leeos.json"
+target-dir = "../build"
+
+[unstable]
+build-std = ["core"]
+build-std-features = ["compiler-builtins-mem"]

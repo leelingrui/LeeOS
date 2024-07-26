@@ -245,32 +245,29 @@ str_cmp:
 elf_magic:
     db 0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 
-load_code_segment:
-    mov eax, esi
-    add eax, 0x20
-    mov ebx, [eax]; Load Phdr Address Offset
+load_all_segment:
+    mov ebx, [esi + 0x20]; Load Phdr Address Offset
+    movzx eax, word [esi + 0x38]
+    push eax
     add ebx, esi; Load Phdr Address
+.load_segment:
     mov eax, [ebx]
-    cmp eax, 0x01; Check Code Segment Type Correct
-    jne .code_segment_error
-    mov eax, ebx
-    add eax, 0x4
-    mov ecx, dword [eax]
-    test ecx, 0x101; Check Code Segment Flags Correct
-    jz .code_segment_error
-    add eax, 0x4
-    mov eax, [eax]
-    mov edx, 0
     push ebx
+    cmp eax, 0x01; Check Segment Type Correct
+    jne .read_finish
+    ; add eax, 0x4
+    ; mov ecx, dword [eax]
+    ; test ecx, 0b101; Check Code Segment Flags Correct
+    ; jne .code_segment_error
+    mov eax, [ebx + 0x8] ; Load Current Segment Offset
+    mov edx, 0
     mov ebx, 512
     div ebx
     mov ecx, eax
     add ecx, 0xa; 计算从何处开始读取磁盘块
-    pop ebx
-    push ecx
-    mov eax, ebx
-    add eax, 40
-    mov eax, [eax]
+    mov ebx, [esp]
+    mov edi, [ebx + 0x10]; Load Curren Segment Position in Memory
+    mov eax, [ebx + 0x28]; load total memories
     mov ebx, 512
     div ebx
     mov ebx, eax
@@ -278,7 +275,6 @@ load_code_segment:
     je .next2
     inc ebx; 计算读取多少磁盘块
 .next2:
-    pop ecx
     test ebx, 0x100
     push ebx; read block num
     push ecx; start block
@@ -307,7 +303,14 @@ load_code_segment:
     add ecx, 0x100
     add edi, 0x100 * 512
     jmp .read_block
-.read_finish
+.read_finish:
+    pop ebx
+    add ebx, 0x38
+    sub dword [esp], 1
+    cmp dword [esp], 0
+    jne .load_segment
+.end_load_all_segment:
+    add esp, 4
     mov eax, 1
     ret
 
@@ -327,7 +330,7 @@ load_system64_header:
     jz error
     mov edi, [elf_header_pos + 0x18]
     mov esi, elf_header_pos
-    call load_code_segment 
+    call load_all_segment 
     ret
 gdt_ptr:
     dw (gdt_end - gdt_base) - 1
@@ -347,7 +350,7 @@ gdt_data:
     dw memory_base & 0xffff
     db (memory_base >> 16) & 0xff
     db 0b10010010
-    db 0b10100000 | (memory_limit >> 16)
+    db 0b11100000 | (memory_limit >> 16)
     db (memory_base >> 24) & 0xff
 gdt_end:
 

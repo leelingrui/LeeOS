@@ -108,7 +108,7 @@ struct KmemCacheCpu
 
 pub struct KmemCacheNode
 {
-    lock : semaphore::SpinLock,
+    lock : semaphore::UnreenterabkeSpinLock,
     nr_partial : u64, // number of slub
     partial : ListHead // free slub list
 }
@@ -185,7 +185,7 @@ pub struct KmemCache
 impl KmemCacheNode {
     fn new() -> KmemCacheNode
     {
-        KmemCacheNode { lock: semaphore::SpinLock::new(1), nr_partial: 0, partial: ListHead::empty() }
+        KmemCacheNode { lock: semaphore::UnreenterabkeSpinLock::new(1), nr_partial: 0, partial: ListHead::empty() }
     }
 
     pub fn kmem_cache_node_bootstrap(&mut self, kmem_cache : &KmemCache)

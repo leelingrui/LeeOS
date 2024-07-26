@@ -1,9 +1,10 @@
-use core::{ffi::{c_char, c_void, CStr}, iter::empty, ptr::null_mut};
+use core::{ffi::{c_char, c_void, CStr}, intrinsics::unlikely, iter::empty, ptr::null_mut};
 use core::intrinsics::ptr_offset_from_unsigned;
 use alloc::string::String;
 
 use crate::kernel::{sched::get_current_running_process, string::{is_separator, strsep}};
-use super::{dcache::DEntry, file::{DirEntry, FSPermission, FSType, FileFlag, File, FS}, inode::Inode};
+
+use super::{dcache::DEntryFlags, file::FSPermission, inode::Inode, mount::lookup_mnt, path::Path};
 pub type Fd = usize;
 
 
@@ -35,33 +36,33 @@ pub fn permission(inode : *mut Inode, perm : FSPermission) -> bool
     }
 }
 
-pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut DEntry
+pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> Path
 {
     unsafe
     {
-        let mut dentry_t;
+        let mut path = Path::empty();
         let pcb = get_current_running_process();
         let mut left = path_name as *mut c_char;
         if is_separator(*left)
         {
-            dentry_t = (*pcb).get_iroot();
+            path = (*pcb).get_iroot();
             left = left.offset(1);
         }
         else if *left != 0 {
-            dentry_t = (*pcb).get_ipwd();
+            path = (*pcb).get_ipwd();
         }
         else {
-            return null_mut()
+            return Path::empty();
         }
         *next = left;
         if *left == 0
         {
-            return dentry_t;
+            return path;
         }
         let mut right = strsep(left);
         if right.is_null() || right < left
         {
-            return dentry_t;
+            return path;
         }
         right = right.offset(1);
         *next = left;
@@ -69,10 +70,20 @@ pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut DEntry
         {
             let name_len = ptr_offset_from_unsigned(right, left) - 1;
             let name = String::from_raw_parts(*next as *mut u8, name_len, name_len);
-            dentry_t = (*dentry_t).look_up(&name);
-            if dentry_t.is_null()
+            if (*path.dentry).d_flags.contains(DEntryFlags::MOUNTED)
             {
-                return null_mut();
+                let mount = lookup_mnt(path.dentry);
+                if unlikely(mount.is_null())
+                {
+                    return Path::empty();
+                }
+                path.dentry = (*mount).mnt_root;
+                path.mnt = mount
+            }
+            path.dentry = (*path.dentry).look_up(&name);
+            if path.dentry.is_null()
+            {
+                return Path::empty();
             }
             
             left = right;
@@ -81,26 +92,27 @@ pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> *mut DEntry
             if right.is_null() || right < left
             {
                 *next = left;
-                return dentry_t;
+                return path;
             }
         }
     }
 }
 
-pub fn namei(path : *const c_char) -> *mut DEntry
+pub fn namei(path : *const c_char) -> Path
 {
     unsafe
     {
         let mut next = null_mut();
-        let dentry_t = named(path, &mut next);
-        if dentry_t.is_null()
+        let mut path = named(path, &mut next);
+        if path.dentry.is_null()
         {
-            return null_mut();
+            return Path::empty();
         }
         if next.is_null()
         {
-            return dentry_t;
+            return path;
         }
-        (*dentry_t).look_up(&String::from(CStr::from_ptr(next).to_str().unwrap()))
+        path.dentry = (*path.dentry).look_up(&String::from(CStr::from_ptr(next).to_str().unwrap()));
+        path
     }
 }

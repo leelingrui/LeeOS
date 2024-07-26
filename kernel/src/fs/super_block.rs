@@ -1,31 +1,18 @@
-use core::{ffi::{c_void, CStr}, alloc::Layout};
+use core::{alloc::Layout, ffi::{c_char, c_void, CStr}, intrinsics::unlikely, ptr::{self, drop_in_place}};
 
-use crate::{logk, kernel::device::{get_device, DeviceType, DevT, DEV_NULL, self}, fs::file::FS, printk};
+use proc_macro::__init;
 
-use super::{file::early_disk_read, ext4::{Ext4DirEntry, Ext4DirEntry2}};
+use crate::{fs::file::FS, kernel::{device::{self, get_device, DevT, DeviceType, DEV_NULL}, errno_base::{is_err, ptr_err, EBUSY, EINVAL}, Err}, logk, printk};
 
-static mut SUPER_TABLE : [Superblock; SUPER_NR] = [Superblock::empty(); SUPER_NR];
-#[derive(Clone, Copy)]
-struct Superblock
-{
-
-}
+use super::{ext4::{Ext4DirEntry, Ext4DirEntry2}, file::{early_disk_read, FileSystem, LogicalPart}, fs::{SB_ACTIVE, SB_RDONLY}, fs_context::FsContext};
 
 
-impl Superblock {
-    const fn empty() -> Self
-    {
-        Self {  }
-    }
-}
-
-
-
+#[__init]
 unsafe fn test_fs()
 {
     let root = FS.get_froot();
     let mut buffer = alloc::alloc::alloc(Layout::from_size_align_unchecked(4096, 1)) as *mut c_void;
-    let _read_size = FS.read_inode((*root).d_inode, buffer, 4096, 0);
+    let _read_size = FS.read_inode((*root.dentry).d_inode, buffer, 4096, 0);
     if _read_size != 0
     {
 
@@ -43,6 +30,7 @@ unsafe fn test_fs()
     }
 }
 
+#[__init]
 fn mount_root()
 {
     logk!("mounting root file system...\n");
@@ -50,14 +38,95 @@ fn mount_root()
     match get_device(259 << 20) {
         Some(device) => 
         {
-            let sb = read_super_block(device.dev);
-            unsafe { FS.load_root_super_block(device.dev, sb) };
+            // unsafe { FS.load_root_super_block(device.dev, sb) };
         },
         None => panic!("no root file system!\n"),
     }
 
 }
 
+fn setup_bdev_super(sb : &mut LogicalPart, sb_flags : u32, fc : *mut FsContext) -> Err
+{
+    0
+}
+
+pub fn get_tree_bdev(fc : *mut FsContext, fill_super : fn(&mut LogicalPart, &mut FsContext) -> Err) -> Err
+{
+    unsafe
+    {
+        if (*fc).source.is_empty()
+        {
+            return -EINVAL;
+        }
+        let mut dev = 0;
+        let mut err = FS.lookup_bdev((*fc).source.as_ptr() as *mut c_char, &mut dev);
+        if 0 != err
+        {
+            return err;
+        }
+        let s = FS.sget_dev(fc, dev);
+        if is_err(s)
+        {
+            return ptr_err(s);
+        }
+        if !(*s).s_root.is_null()
+        {
+            if unlikely((((*s).s_flags ^ (*fc).sb_flags) & SB_RDONLY) != 0)
+            {
+                FS.deactive_logic_part(s);
+                return -EBUSY
+            }
+        }
+        else {
+            err = setup_bdev_super(s, (*fc).sb_flags, fc);
+            if 0 == err
+            {
+                err = fill_super(s, &mut *fc);
+            }
+            if 0 != err
+            {
+                FS.deactive_logic_part(s);
+                return err;
+            }
+            (*s).s_flags |= SB_ACTIVE;
+        }
+        if !(*fc).root.is_null()
+        {
+            panic!("fc.root already set");
+        }
+        (*fc).root = (*(*s).s_root).dget();
+        0
+    }
+
+}
+
+pub fn vfs_get_tree(fc : *mut FsContext) -> Err
+{
+    unsafe
+    {
+        if !(*fc).root.is_null()
+        {
+            return -EBUSY;
+        }
+        let err = match (*(*fc).ops).get_tree {
+            Some(func) => func(&*fc),
+            None => panic!("get_tree_cant_be_null!"),
+        };
+        if err < 0
+        {
+            return err;
+        }
+        if unlikely((*fc).root.is_null())
+        {
+            panic!("Filesystem {} get_tree() didn't set fc->root", (*(*fc).fs_type).name);
+        }
+        0
+    }
+
+}
+
+
+#[__init]
 fn read_super_block(dev : DevT) -> *mut c_void
 {
     unsafe
@@ -73,6 +142,8 @@ fn read_super_block(dev : DevT) -> *mut c_void
 
 
 const SUPER_NR: usize = 0x10;
+
+#[__init]
 pub fn super_init()
 {
     mount_root();

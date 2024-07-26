@@ -1,18 +1,24 @@
 use core::ffi::c_char;
+<<<<<<< HEAD
 use lee_os::{kernel::{syscall::{__NR_WRITE, __syscall3, __syscall1, __syscall0, __NR_FORK, __NR_EXIT, __NR_SYS_EXECVE}, process::Pid, Err}, fs};
 
 pub fn write(fd : fs::file::FileDescriptor, buf : *const c_char, count : usize) -> usize
+=======
+use crate::syscall_defs::{self, __syscall0, __syscall3};
+
+pub fn write(fd : u32, buf : *const c_char, count : usize) -> usize
+>>>>>>> mount
 {
     unsafe {
-        __syscall3(__NR_WRITE, fd as u64, buf as u64, count as u64)
+        __syscall3(syscall_defs::__NR_WRITE, fd as u64, buf as u64, count as u64)
     }
 }
 
-pub fn fork() -> Pid
+pub fn fork() -> i32
 {
     unsafe
     {
-        __syscall0(__NR_FORK) as Pid
+        __syscall0(syscall_defs::__NR_FORK) as i32
     }
 }
 

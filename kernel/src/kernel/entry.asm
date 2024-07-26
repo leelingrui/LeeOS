@@ -8,5 +8,5 @@ _start:
     call kernel_init
     xchg bx, bx
     hlt
-    flag:
+flag:
     jmp flag

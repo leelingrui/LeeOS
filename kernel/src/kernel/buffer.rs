@@ -59,9 +59,18 @@ impl Buffer {
         }
     }
 
-    pub fn write_to_buffer(&mut self)
+    pub fn write_to_buffer(&mut self, src : *mut c_void, offset : usize, len : usize)
     {
-        todo!()
+        if len + offset <= self.buffer_size
+        {
+            self.rw_lock.wrlock(); 
+            unsafe { compiler_builtins::mem::memcpy(self.buffer.offset(offset as isize) as *mut u8, src as *mut u8, len) };
+            self.avaliable = true;
+            self.rw_lock.wrunlock();
+        }
+        else {
+            panic!("write area out of range");
+        }
     }
 
     pub fn read_from_device(&mut self, dev : DevT, idx : Idx, block_num : usize)
@@ -70,9 +79,9 @@ impl Buffer {
         self.avaliable = true;
     }
 
-    pub fn write_to_device(&mut self)
+    pub fn write_to_device(&mut self, dev : DevT, idx : Idx, block_num : usize)
     {
-        todo!();
+        device_request(dev, (*self).buffer, block_num, idx, 0, DevReqType::Write);
     }
 
     pub fn read_from_buffer(&mut self, dst : *mut c_void, offset : usize, len : usize)

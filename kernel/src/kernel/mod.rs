@@ -28,6 +28,23 @@ pub mod rtc;
 pub mod input;
 pub mod ramdisk;
 pub mod errno_base;
+pub mod syscall_defs;
 
 pub type Off = usize;
 pub type Err = i64;
+
+#[macro_export]
+macro_rules! container_of {
+	($ptr:expr, $type:path, $field:ident) => {
+		$ptr.cast::<u8>()
+			.sub(core::mem::offset_of!($type, $field))
+			.cast::<$type>()
+	};
+}
+
+// #[macro_export]
+// macro_rules! __init {
+//     ($vi:vis, $fnname:ident, $blk:block) => {
+        
+//     };
+// }

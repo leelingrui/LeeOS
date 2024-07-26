@@ -11,6 +11,7 @@ use core::ptr::null_mut;
 
 use alloc::fmt::format;
 use alloc::string::String;
+use proc_macro::__init;
 
 use crate::fs::PART_FS_EXTENDED;
 use crate::fs::ext4::PartEntry;
@@ -315,6 +316,8 @@ fn ide_select_drive(disk : &IdeDiskT)
         (*disk.ctrl).active = disk
     }
 }
+
+#[__init]
 #[inline(always)]
 fn ide_busy_wait(ctrl : *mut IdeCtrlT, mask : u8)
 {
@@ -453,6 +456,8 @@ fn ide_identify(disk : &mut IdeDiskT) -> i64
 }
 
 const IDE_PART_NR: usize = 4;
+
+#[__init]
 unsafe fn ide_part_init(disk : &mut IdeDiskT)
 {
     if disk.total_lba == 0
@@ -494,12 +499,15 @@ unsafe fn ide_part_init(disk : &mut IdeDiskT)
     
 }
 
+#[__init]
 pub fn ide_init()
 {
     ide_ctrl_init();
     ide_install();
 }
 
+
+#[__init]
 fn ide_install()
 {
     unsafe
@@ -541,6 +549,8 @@ fn ide_install()
 
 }
 
+
+#[__init]
 pub fn ide_ctrl_init()
 {
     unsafe

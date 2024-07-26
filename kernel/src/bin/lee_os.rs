@@ -10,6 +10,9 @@ use core::arch::global_asm;
 extern crate alloc;
 use core::panic::PanicInfo;
 
+use alloc::string::ToString;
+use lee_os::crypto::crc32c::{self, init_crc32};
+use lee_os::fs::file::init_filesystem;
 use lee_os::kernel::keyboard::keyboard_init;
 use lee_os::kernel::ramdisk::ramdisk_init;
 use lee_os::kernel::time::time_init;
@@ -24,7 +27,8 @@ use lee_os::kernel::syscall::syscall_init;
 use lee_os::kernel::fpu::fpu_init;
 use lee_os::mm::memory::init_memory;
 use lee_os::mm::shmem::init_shmem;
-use lee_os::{printk, bochs_break};
+use lee_os::{bochs_break, printk};
+use proc_macro::__init;
 use core::arch::asm;
 
 // use kernel::console::Console;
@@ -33,28 +37,32 @@ global_asm!(include_str!("../kernel/entry.asm"));
 #[panic_handler]
 pub fn panic(_info: &PanicInfo) -> !
 {
-    printk!("{:#?}\n", _info);
+    printk!("{:#?}\n", _info.to_string());
     loop {
         
     }
 }
 
 
-
+#[__init]
 #[no_mangle]
-unsafe fn kernel_init()
+fn kernel_init()
 {
-    console_init();
-    gdt_init();
-    interrupt_init();
-    init_memory(0, core::ptr::null());
-    ramdisk_init();
-    init_shmem();
-    ide_init();
-    tss_init();
-    clock_init();
-    super_init();
-    process_init();
-    interrupt::set_interrupt_state(true);
-    printk!("end call int");
+    unsafe
+    {
+        console_init();
+        gdt_init();
+        interrupt_init();
+        init_memory(0, core::ptr::null());
+        ramdisk_init(); 
+        init_shmem();
+        ide_init();
+        super_init();
+        tss_init();
+        clock_init();
+        init_filesystem();
+        process_init();
+        interrupt::set_interrupt_state(true);
+        printk!("end call init");
+    }
 }

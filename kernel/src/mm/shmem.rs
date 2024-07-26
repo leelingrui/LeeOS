@@ -5,6 +5,7 @@ use core::intrinsics::unlikely;
 use alloc::alloc::alloc;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use proc_macro::__init;
 
 use crate::fs::dcache::DEntryOperations;
 use crate::fs::file::{DirEntry, FSPermission};
@@ -66,6 +67,8 @@ pub struct ShmemSbInfo
     qlimits : ShmemQuotaLimits
 }
 
+
+#[__init]
 pub fn init_shmem()
 {
     unsafe

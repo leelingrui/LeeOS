@@ -19,3 +19,11 @@ fn _start(argc : isize, argv : *const *const u8) -> isize
 }
 
 
+#[panic_handler]
+pub fn panic(_info: &PanicInfo) -> !
+{
+    println!("{_info}\n");
+    loop {
+            
+        }
+}

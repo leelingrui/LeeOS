@@ -2,6 +2,8 @@ use core::arch::x86_64::_mm_crc32_u32;
 use core::ffi::c_void;
 use core::intrinsics::unlikely;
 
+use proc_macro::__init;
+
 use crate::__be32_to_cpu;
 use crate::__cpu_to_be32;
 use crate::__cpu_to_le32;
@@ -13,6 +15,8 @@ use crate::kernel::cpu::CpuVersion;
 use super::crc32table::CRC32C_TABLE_LE;
 
 static mut SSE4_2_ENABLE : bool = false;
+
+#[__init]
 pub fn init_crc32()
 {
     unsafe

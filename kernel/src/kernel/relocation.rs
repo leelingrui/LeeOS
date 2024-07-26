@@ -1,3 +1,5 @@
+use proc_macro::__init;
+
 use super::cpu::get_cpu_number;
 use super::elf64::{Elf64Shdr, Elf64Phdr, Elf64Ehdr};
 use super::io::{self, IdeCtrlT, IDE_IOBASE_PRIMARY, IDE_LBA_MASTER, IDE_FEATURE, IDE_SECTOR, IDE_LBA_LOW, IDE_LBA_MID, IDE_LBA_HIGH, IDE_HDDEVSEL, outb, IDE_SR_BSY, IDE_SR_ERR, IDE_ALT_STATUS, IDE_DATA, inw, SECTOR_SIZE, inb, IDE_SR_DRDY, IDE_CMD_READ, IDE_COMMAND, IDE_SR_DRQ};
@@ -12,8 +14,8 @@ const SHF_ALLOC : u64 = 0b10;
 pub static mut KERNEL_SIZE : usize = 0;
 
 
-
-unsafe fn system_relocate64(elf64_shdr : *mut Elf64Shdr)
+#[__init]
+unsafe fn system_relocate64(elf64_shdr : *mut Elf64Shdr, base_addr : u64)
 {
     let mut reloc_info;
     unsafe
@@ -23,8 +25,8 @@ unsafe fn system_relocate64(elf64_shdr : *mut Elf64Shdr)
         let mut var = 0;
         while var < rela_num
         {
-            match (*reloc_info).r_info {
-                R_X86_64_RELATIVE => RX86_64Relative_Relocate(reloc_info),
+            match (*reloc_info).r_type & 0xffffffff {
+                R_X86_64_RELATIVE => RX86_64Relative_Relocate(reloc_info, base_addr),
                 _ => panic!("unknown relocation type")
             }
             reloc_info = reloc_info.offset(1);
@@ -33,53 +35,54 @@ unsafe fn system_relocate64(elf64_shdr : *mut Elf64Shdr)
     }
 }
 
+#[__init]
 #[inline(always)]
-unsafe fn RX86_64Relative_Relocate(elf64_rela : *mut Elf64Rela)
+unsafe fn RX86_64Relative_Relocate(elf64_rela : *mut Elf64Rela, base_addr : u64)
 {
     *((*elf64_rela).r_offset as *mut u64) += (*elf64_rela).r_addend | 0xffff8 << 44;
 }
 
 
-const R_X86_64_NONE : u64 = 0;
-const R_X86_64_64 : u64 = 1;
-const R_X86_64_PC32 : u64 = 2;
-const R_X86_64_GOT32 : u64 = 3;
-const R_X86_64_PLT32 : u64 = 4;
-const R_X86_64_COPY : u64 = 5;
-const R_X86_64_GLOB_DAT : u64 = 6;
-const R_X86_64_JUMP_SLOT : u64 = 7;
-const R_X86_64_RELATIVE : u64 = 8;
-const R_X86_64_GOTPCREL : u64 = 9;
-const R_X86_64_32 : u64 = 10;
-const R_X86_64_32S : u64 = 11;
-const R_X86_64_16 : u64 = 12;
-const R_X86_64_PC16 : u64 = 13;
-const R_X86_64_8 : u64 = 14;
-const R_X86_64_PC8 : u64 = 15;
-const R_X86_64_DTPMOD64 : u64 = 16;
-const R_X86_64_DTPOFF64 : u64 = 17;
-const R_X86_64_TPOFF64 : u64 = 18;
-const R_X86_64_TLSGD : u64 = 19;
-const R_X86_64_TLSLD : u64 = 20;
-const R_X86_64_DTPOFF32 : u64 = 21;
-const R_X86_64_GOTTPOFF : u64 = 22;
-const R_X86_64_TPOFF32 : u64 = 23;
-const R_X86_64_PC64 : u64 = 24;
-const R_X86_64_GOTOFF64 : u64 = 25;
-const R_X86_64_GOTPC32 : u64 = 26;
-const R_X86_64_GOT64 : u64 = 27;
-const R_X86_64_GOTPCREL64 : u64 = 28;
-const R_X86_64_GOTPC64 : u64 = 29;
-const R_X86_64_GOTPLT64 : u64 = 30;
-const R_X86_64_PLTOFF64 : u64 = 31;
-const R_X86_64_SIZE32 : u64 = 32;
-const R_X86_64_SIZE64 : u64 = 33;
-const R_X86_64_GOTPC32_TLSDESC : u64 = 34;
-const R_X86_64_TLSDESC_CALL : u64 = 35;
-const R_X86_64_TLSDESC : u64 = 36;
-const R_X86_64_IRELATIVE : u64 = 37;
-const R_X86_64_GOTPCRELX : u64 = 41;
-const R_X86_64_REX_GOTPCRELX : u64 = 42;
+const R_X86_64_NONE : u32 = 0;
+const R_X86_64_64 : u32 = 1;
+const R_X86_64_PC32 : u32 = 2;
+const R_X86_64_GOT32 : u32 = 3;
+const R_X86_64_PLT32 : u32 = 4;
+const R_X86_64_COPY : u32 = 5;
+const R_X86_64_GLOB_DAT : u32 = 6;
+const R_X86_64_JUMP_SLOT : u32 = 7;
+const R_X86_64_RELATIVE : u32 = 8;
+const R_X86_64_GOTPCREL : u32 = 9;
+const R_X86_64_32 : u32 = 10;
+const R_X86_64_32S : u32 = 11;
+const R_X86_64_16 : u32 = 12;
+const R_X86_64_PC16 : u32 = 13;
+const R_X86_64_8 : u32 = 14;
+const R_X86_64_PC8 : u32 = 15;
+const R_X86_64_DTPMOD64 : u32 = 16;
+const R_X86_64_DTPOFF64 : u32 = 17;
+const R_X86_64_TPOFF64 : u32 = 18;
+const R_X86_64_TLSGD : u32 = 19;
+const R_X86_64_TLSLD : u32 = 20;
+const R_X86_64_DTPOFF32 : u32 = 21;
+const R_X86_64_GOTTPOFF : u32 = 22;
+const R_X86_64_TPOFF32 : u32 = 23;
+const R_X86_64_PC64 : u32 = 24;
+const R_X86_64_GOTOFF64 : u32 = 25;
+const R_X86_64_GOTPC32 : u32 = 26;
+const R_X86_64_GOT64 : u32 = 27;
+const R_X86_64_GOTPCREL64 : u32 = 28;
+const R_X86_64_GOTPC64 : u32 = 29;
+const R_X86_64_GOTPLT64 : u32 = 30;
+const R_X86_64_PLTOFF64 : u32 = 31;
+const R_X86_64_SIZE32 : u32 = 32;
+const R_X86_64_SIZE64 : u32 = 33;
+const R_X86_64_GOTPC32_TLSDESC : u32 = 34;
+const R_X86_64_TLSDESC_CALL : u32 = 35;
+const R_X86_64_TLSDESC : u32 = 36;
+const R_X86_64_IRELATIVE : u32 = 37;
+const R_X86_64_GOTPCRELX : u32 = 41;
+const R_X86_64_REX_GOTPCRELX : u32 = 42;
 
 enum SegmentType
 {
@@ -95,14 +98,16 @@ enum SegmentType
 }
 
 #[repr(C)]
-#[repr(align(1))]
+#[repr(packed)]
 struct Elf64Rela
 {
     r_offset : u64,               /* Address */
-    r_info : u64,                 /* Relocation type and symbol index */
-    r_addend : u64               /* Addend */
+    r_type : u32,                 /* Relocation type and symbol index */
+    r_sym : u32,                 
+    r_addend : u64                /* Addend */
 }
 
+#[__init]
 fn ide_early_select_sector(iobase : u16, selector : u8, lba : u64, cnt : u8)
 {
     unsafe
@@ -116,6 +121,9 @@ fn ide_early_select_sector(iobase : u16, selector : u8, lba : u64, cnt : u8)
     }
 }
 
+
+
+#[__init]
 fn ide_early_pio_read_sector(iobase : u16, mut offset : *mut u16)
 {
     let mut cnt = 0;
@@ -130,6 +138,7 @@ fn ide_early_pio_read_sector(iobase : u16, mut offset : *mut u16)
     }
 }
 
+#[__init]
 #[inline(always)]
 fn ide_early_busy_wait(io_base : u16 ,mask : u8)
 {
@@ -151,35 +160,38 @@ fn ide_early_busy_wait(io_base : u16 ,mask : u8)
 
 }
 
+#[__init]
 fn ide_early_pio_sync_read(start_block : u32, num_blocks : u8, dst : *mut u8)
 {
-    let mut var = 0u64;
-    if num_blocks <= 0
+    let blocks = if num_blocks == 0
     {
-        panic!("read blocks can't lower than 1");
+        256
     }
     else
     {
-        io::outb(IDE_IOBASE_PRIMARY + IDE_HDDEVSEL, IDE_LBA_MASTER);
-        ide_early_busy_wait(IDE_IOBASE_PRIMARY, IDE_SR_DRDY);
-        ide_early_select_sector(IDE_IOBASE_PRIMARY, IDE_LBA_MASTER, start_block as u64, num_blocks);
-        outb(IDE_IOBASE_PRIMARY + IDE_COMMAND, IDE_CMD_READ);
-        while var < num_blocks as u64 {
-            ide_early_busy_wait(IDE_IOBASE_PRIMARY, IDE_SR_DRQ);
-            ide_early_pio_read_sector(IDE_IOBASE_PRIMARY, (dst as u64 + SECTOR_SIZE * var) as *mut u16);
-            var += 1;
-        }
+        num_blocks as u64
+    };
+    let mut var = 0u64;
+    io::outb(IDE_IOBASE_PRIMARY + IDE_HDDEVSEL, IDE_LBA_MASTER);
+    ide_early_busy_wait(IDE_IOBASE_PRIMARY, IDE_SR_DRDY);
+    ide_early_select_sector(IDE_IOBASE_PRIMARY, IDE_LBA_MASTER, start_block as u64, num_blocks);
+    outb(IDE_IOBASE_PRIMARY + IDE_COMMAND, IDE_CMD_READ);
+    while var < blocks {
+        ide_early_busy_wait(IDE_IOBASE_PRIMARY, IDE_SR_DRQ);
+        ide_early_pio_read_sector(IDE_IOBASE_PRIMARY, (dst as u64 + SECTOR_SIZE * var) as *mut u16);
+        var += 1;
     }
 }
 
+#[__init]
 unsafe fn load_system_section(elf64_phdr : *mut Elf64Phdr, kernel_size : &mut usize)
 {
-    let blocks;
+    let mut blocks;
     let mut block_num = 0u64;
     if (*elf64_phdr).p_flags | (SegmentType::PtLoad as u32) > 0
     {
         // Calculate Load Infomation
-        blocks = (*elf64_phdr).p_filesz / io::SECTOR_SIZE;
+        blocks = (*elf64_phdr).p_filesz.div_ceil(io::SECTOR_SIZE);
         if blocks == 0
         {
             load_bss(elf64_phdr);
@@ -188,11 +200,11 @@ unsafe fn load_system_section(elf64_phdr : *mut Elf64Phdr, kernel_size : &mut us
         {
             while blocks > 255
             {
-                ide_early_pio_sync_read((((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, 0, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num) as *mut u8);
+                ide_early_pio_sync_read((((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10 + block_num * 256) as u32, 0, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num) as *mut u8);
                 block_num += 1;
-                block_num -= 256;
+                blocks -= 256;
             }
-            ide_early_pio_sync_read((((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10) as u32, (blocks + ((*elf64_phdr).p_filesz % io::SECTOR_SIZE != 0) as u64) as u8, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num - (*elf64_phdr).p_paddr % io::SECTOR_SIZE) as *mut u8);
+            ide_early_pio_sync_read((((*elf64_phdr).p_offset / io::SECTOR_SIZE) + 10 + block_num * 256) as u32, (blocks + ((*elf64_phdr).p_filesz % io::SECTOR_SIZE != 0) as u64) as u8, ((*elf64_phdr).p_paddr + 256 * io::SECTOR_SIZE * block_num - (*elf64_phdr).p_paddr % io::SECTOR_SIZE) as *mut u8);
         }
         if ((*elf64_phdr).p_paddr + (*elf64_phdr).p_filesz) as usize > KERNEL_SIZE
         {
@@ -201,6 +213,7 @@ unsafe fn load_system_section(elf64_phdr : *mut Elf64Phdr, kernel_size : &mut us
     }
 }
 
+#[__init]
 unsafe fn load_bss(elf64_phdr : *mut Elf64Phdr)
 {
     // memset((*elf64_phdr).p_paddr as *mut u8, 0, (*elf64_phdr).p_memsz as usize);
@@ -214,7 +227,8 @@ unsafe fn load_bss(elf64_phdr : *mut Elf64Phdr)
 }
 
 
-pub unsafe fn process_relocation(elf64_ehdr : *mut Elf64Ehdr)
+#[__init]
+pub unsafe fn process_relocation(elf64_ehdr : *mut Elf64Ehdr, base_addr : u64)
 {
     let mut shdr;
     let mut var = 0;
@@ -223,13 +237,14 @@ pub unsafe fn process_relocation(elf64_ehdr : *mut Elf64Ehdr)
     {
         if (*shdr).sh_type == 4
         {
-            system_relocate64(shdr);
+            system_relocate64(shdr, base_addr);
         }
         shdr = shdr.offset(1);
         var += 1;
     }
 }
 
+#[__init]
 #[no_mangle]
 pub unsafe fn kernel_relocation(elf64_ehdr : *mut Elf64Ehdr)
 {
@@ -257,7 +272,7 @@ pub unsafe fn kernel_relocation(elf64_ehdr : *mut Elf64Ehdr)
         {
             if (*shdr).sh_type == 4
             {
-                system_relocate64(shdr);
+                system_relocate64(shdr, 0);
             }
             shdr = shdr.offset(1);
             var += 1;

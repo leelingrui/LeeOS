@@ -1,4 +1,13 @@
-#[inline]
+#[macro_export]
+macro_rules! bit {
+	($nr:expr) => {
+		1 << $nr
+	};
+}
+
+
+
+#[inline(always)]
 pub fn fls(mut x : u32) -> u32
 {
 	let mut r = 32u32;
@@ -30,7 +39,7 @@ pub fn fls(mut x : u32) -> u32
 	return r;
 }
 
-#[inline]
+#[inline(always)]
 pub fn fls64(mut x : u64) -> u64
 {
 	let mut r: u64 = 32;
@@ -66,7 +75,7 @@ pub fn fls64(mut x : u64) -> u64
 	return r;
 }
 
-#[inline]
+#[inline(always)]
 pub fn ffs(mut x : i32) -> u32
 {
 	let mut r = 1;
@@ -98,7 +107,7 @@ pub fn ffs(mut x : i32) -> u32
 	return r;
 }
 
-#[inline]
+#[inline(always)]
 pub fn ffs64(mut x : i64) -> u64
 {
 	let mut r = 1;

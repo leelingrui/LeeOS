@@ -8,15 +8,25 @@ KERNEL_FILES:=$(KERNEL_SRC)/lib.rs $(KERNEL_SRC)/kernel/console.rs $(KERNEL_SRC)
 	$(KERNEL_SRC)/fs/file.rs $(KERNEL_SRC)/fs/mod.rs $(KERNEL_SRC)/mm/mm_type.rs $(KERNEL_SRC)/kernel/sched.rs $(KERNEL_SRC)/fs/ntfs.rs $(KERNEL_SRC)/kernel/time.rs \
 	$(KERNEL_SRC)/fs/ext4.rs $(KERNEL_SRC)/fs/super_block.rs $(KERNEL_SRC)/kernel/device.rs $(KERNEL_SRC)/kernel/buffer.rs $(KERNEL_SRC)/kernel/execve.rs $(KERNEL_SRC)/kernel/fork.rs \
 	$(KERNEL_SRC)/kernel/keyboard.rs $(KERNEL_SRC)/kernel/rtc.rs $(KERNEL_SRC)/kernel/input.rs $(KERNEL_SRC)/mm/shmem.rs $(KERNEL_SRC)/kernel/errno_base.rs $(KERNEL_SRC)/fs/dcache.rs $(KERNEL_SRC)/fs/fs.rs\
-	$(KERNEL_SRC)/fs/mnt_idmapping.rs $(KERNEL_SRC)/fs/libfs.rs
+	$(KERNEL_SRC)/fs/mnt_idmapping.rs $(KERNEL_SRC)/fs/libfs.rs $(KERNEL_SRC)/fs/fs_context.rs $(KERNEL_SRC)/fs/path.rs $(KERNEL_SRC)/fs/ns_common.rs $(KERNEL_SRC)/fs/ida.rs
+MACRO_SRC:=./proc_macro/src
+MACRO_FILES:=$(MACRO_SRC)/lib.rs $(MACRO_SRC)/__init.rs $(MACRO_SRC)/__exit.rs
+
 ENTRYPOINT:=0x0xffff800000100000
 # RFLAGS+= target-feature=-crt-static
 RFLAGS:=$(strip ${RFLAGS})
 DEBUG:=
-BUILTIN_APP=$(BUILD)/x86_64-unknown-none/debug/init
+
+
+BUILTIN_APP=$(BUILD)/x86_64-unknown-leeos/debug/init
+
 
 LIB_SRC:=./lib/src
-LIB_FILES:=$(LIB_SRC)/lib.rs $(LIB_SRC)/unistd.rs ./lib/Makefile $(LIB_SRC)/bin/init.rs $(LIB_SRC)/../.cargo/config.toml
+LIB_FILES:=$(LIB_SRC)/lib.rs $(LIB_SRC)/unistd.rs $(LIB_SRC)/macros.rs $(LIB_SRC)/print.rs ./lib/Makefile $(LIB_SRC)/../.cargo/config.toml
+
+BUILTIN_SRC:=./builtins/src
+BUILTIN_APP_FILES:=$(BUILTIN_SRC)/bin/init.rs $(BUILTIN_SRC)/lib.rs
+
 
 $(BUILD)/boot/%.asm.bin: $(KERNEL_SRC)/boot/%.asm
 	$(shell mkdir -p $(dir $@))
@@ -26,8 +36,11 @@ $(BUILD)/kernel/%.asm.bin: $(KERNEL_SRC)/kernel/%.asm
 	$(shell mkdir -p $(dir $@))
 	nasm -f bin $(DEBUG) $< -o $@
 
-$(BUILTIN_APP): $(LIB_FILES)
+$(BUILD)/x86_64-unknown-leeos/debug/liblib.rlib: $(LIB_FILES) 
 	$(MAKE) -C ./lib build_lib
+
+$(BUILTIN_APP): $(BUILTIN_APP_FILES) $(BUILD)/x86_64-unknown-leeos/debug/liblib.so
+	$(MAKE) -C ./builtins build_builtins
 
 .PHONY: test
 test: $(BUILD)/master.img
@@ -41,8 +54,7 @@ usb: $(BUILD)/boot/boot.asm.bin /dev/sdb
 	sudo dd if=usb.bin of=dev/sdb bs=512 count=1 conv=notrunc
 	rm usb.bin
 
-$(BUILD)/x86_64-unknown-none/debug/lee_os: $(KERNEL_FILES) \
-											$(KERNEL_SRC)/linker.ld ./kernel/Makefile ./kernel/Cargo.toml
+$(BUILD)/x86_64-unknown-none/debug/lee_os: $(KERNEL_FILES) $(MACRO_FILES) ./kernel/Makefile ./kernel/Cargo.toml $(KERNEL_SRC)/linker.ld
 	$(MAKE) -C ./kernel build_kernel
 
 #

@@ -1,6 +1,8 @@
 use core::{ffi::c_char, fmt::Write};
 use core::fmt;
 use core::arch::asm;
+use proc_macro::__init;
+
 use crate::bochs_break;
 
 use super::{io, string};
@@ -187,7 +189,7 @@ impl Console
             erase: ERASE,
         }
     }
-
+    #[__init]
     pub fn init(&mut self)
     {
         self.screen = MEM_BASE as u64;
@@ -269,9 +271,13 @@ pub fn _print(args : fmt::Arguments)
 }
 
 #[no_mangle]
+#[__init]
 pub unsafe fn console_init()
 {
-    CONSOLE.init();
+    unsafe
+    {
+        CONSOLE.init();
+    }
 }
 
 #[macro_export]

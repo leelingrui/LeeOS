@@ -1,5 +1,6 @@
 use alloc::alloc::{Layout, alloc, alloc_zeroed};
 use alloc::boxed::Box;
+use proc_macro::__init;
 use core::alloc::GlobalAlloc;
 use core::fmt::Display;
 use core::intrinsics::size_of;
@@ -415,6 +416,7 @@ impl MemoryPool {
         }
     }
 
+    #[__init]
     fn init(&mut self, memory_descriptor : &mut MemoryDescriptor)
     {
         assert!(size_of::<slub::Slab>() == size_of::<page::Page>(), "all page descriptor must have same length");
@@ -558,6 +560,7 @@ impl MemoryPool {
         }
     }
 
+    #[__init]
     fn init_linear_map_area(pml4_ptr : *mut Pml4)
     {
         unsafe {
@@ -1079,6 +1082,7 @@ fn x86_64_copy_pml4(dst : *mut Pml4, src : *mut Pml4, mut start : *mut c_void, e
     }
 }
 
+#[__init]
 pub fn init_memory(magic : u32, address : *const c_void)
 {
     let mut e820map_addr : *mut E820Map = ARDS_BUFFER as *mut E820Map;

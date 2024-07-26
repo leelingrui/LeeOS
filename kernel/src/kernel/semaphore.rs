@@ -1,16 +1,72 @@
 use core::sync::atomic;
 use alloc::collections::BTreeMap;
-use super::process::{sys_yield, PCB};
-use super::sched::get_current_running_process;
+use core::{ptr::null_mut, sync::atomic};
+use super::{process::{sys_yield, PCB}, sched::get_current_running_process};
 
 pub struct  SpinLock
+{
+    counting : atomic::AtomicI64,
+    current_holder : *mut PCB
+}
+
+pub struct  UnreenterabkeSpinLock
 {
     counting : atomic::AtomicI64,
 }
 
 impl Default for SpinLock {
     fn default() -> Self {
-        Self { counting: atomic::AtomicI64::new(0) }
+        Self { counting: atomic::AtomicI64::new(0), current_holder: null_mut() }
+    }
+}
+
+pub type Semaphore = SpinLock;
+
+impl UnreenterabkeSpinLock
+{
+    pub fn acquire(&mut self, cnt : i64)
+    {
+        let mut expect;
+        expect = self.counting.load(atomic::Ordering::Acquire);
+        if expect < 0
+        {
+            panic!()
+        }
+        loop
+        {
+            if expect - cnt >= 0
+            {
+                match self.counting.compare_exchange_weak(expect, expect - cnt, atomic::Ordering::Release, atomic::Ordering::Relaxed)
+                {
+                    Ok(_) => break,
+                    Err(current) => expect = current,
+                }
+            }
+        }
+    }
+
+    pub fn release(&mut self, cnt : i64)
+    {
+        if cnt <= 0 
+        {
+            panic!()
+        }
+        let mut expect = self.counting.load(atomic::Ordering::Acquire);;
+        loop
+        {
+            match self.counting.compare_exchange_weak(expect, expect + cnt, atomic::Ordering::Release, atomic::Ordering::Relaxed)
+            {
+                Ok(_) => break,
+                Err(current) => expect = current,
+            }
+        }
+    }
+
+    pub const fn new(start_cnt : i64) -> Self
+    {
+        Self {
+            counting : atomic::AtomicI64::new(start_cnt),
+        }
     }
 }
 
@@ -104,9 +160,10 @@ impl SpinLock
 {
     pub fn acquire(&mut self, cnt : i64)
     {
-        if cnt <= 0 
+        if self.current_holder == get_current_running_process()
         {
-            panic!()
+            self.counting.fetch_sub(1, atomic::Ordering::AcqRel);
+            return;
         }
         let mut expect;
         expect = self.counting.load(atomic::Ordering::Acquire);
@@ -125,6 +182,7 @@ impl SpinLock
                 expect = self.counting.load(atomic::Ordering::Acquire);
             }
         }
+        self.current_holder = get_current_running_process();
     }
 
     pub fn release(&mut self, cnt : i64)
@@ -147,7 +205,8 @@ impl SpinLock
     pub const fn new(start_cnt : i64) -> SpinLock
     {
         SpinLock {
-            counting : atomic::AtomicI64::new(start_cnt)
+            counting : atomic::AtomicI64::new(start_cnt),
+            current_holder: null_mut(),
         }
     }
 }

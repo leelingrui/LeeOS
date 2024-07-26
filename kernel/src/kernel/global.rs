@@ -1,4 +1,4 @@
-use core::{intrinsics::size_of, default::Default, arch::asm, fmt};
+use core::{ptr::addr_of, intrinsics::size_of, default::Default, arch::asm, fmt};
 use crate::{printk, kernel::string::memset};
 
 const GDT_SIZE : usize = 7;
@@ -7,6 +7,7 @@ pub static mut KERNEL_TSS : TaskStateSegment = TaskStateSegment::new();
 #[no_mangle]
 pub static mut GDT_PTR : PointerT = PointerT{ base: 0, limit: 0 };
 use bitfield::bitfield;
+use proc_macro::__init;
 pub const KERNEL_CODE_IDX : usize = 1;
 pub const KERNEL_DATA_IDX : usize = 2;
 pub const USER_DATA_IDX : usize = 3;
@@ -125,6 +126,8 @@ pub fn set_tss64(tss_ptr : *mut TaskStateSegment, rsp0 : u64, rsp1 : u64, rsp2 :
     }
 }
 
+
+#[__init]
 pub fn tss_init()
 {
     unsafe
@@ -140,6 +143,7 @@ pub fn tss_init()
     }
 }
 
+#[__init]
 #[no_mangle]
 pub fn gdt_init()
 {
@@ -155,7 +159,7 @@ pub fn gdt_init()
         GDT_PTR.limit = (GDT_SIZE * size_of::<DescriptorT>() - 1) as u16;
         asm!(
             "lgdt [{gdt_ptr}]",
-            gdt_ptr = in(reg) &GDT_PTR as *const PointerT as u64
+            gdt_ptr = in(reg) addr_of!(GDT_PTR) as u64
         );
     }
 }

@@ -3,7 +3,7 @@ use alloc::{collections::BTreeMap, string::{String, ToString}};
 
 use crate::kernel::semaphore::RWLock;
 
-use super::{file::{LogicalPart, FS}, inode::Inode};
+use super::{file::{FileMode, LogicalPart, FS}, inode::Inode};
 
 
 pub type RevalidateFunc = fn(*mut DEntry, u32) -> i64;
@@ -56,23 +56,64 @@ pub struct QStr
     hash : u64
 }
 
+bitflags::bitflags! {
+    pub struct DEntryFlags : u32
+    {
+        const OP_HASH = 0x1;
+        const OP_COMPARE = 0x2;
+        const OP_REVALIDATE = 0x4;
+        const OP_DELETE = 0x8;
+        const OP_PRUNE = 0x10;
+        const DISCONNECTED = 0x20;
+        const REFERENED = 0x40;
+        const DONTCACHE = 0x80;
+        const CANT_MOUNT = 0x100;
+        const GENOCIDE = 0x200;
+        const SHRINK_LIST = 0x400;
+        const OP_WEAK_REVALIDATE = 0x800;
+        const NFSFS_RENAMED = 0x1000;
+        const FSNOTIFIY_PARENT_WATCHED = 0x2000;
+        const DENTRY_KILLED = 0x4000;
+        const MOUNTED = 0x8000;
+        const NEED_AUTOMOUNT = 0x10000;
+        const MANAGE_TRANSIT = 0x20000;
+    }
+}
+
 pub struct DEntry
 {
+    pub d_flags : DEntryFlags,
     pub d_seq : RWLock,
     pub d_sb : *mut LogicalPart,
     d_parent : *mut DEntry,
     pub d_inode : *mut Inode,
     d_children : BTreeMap<String, *mut DEntry>,
-    d_ref : AtomicI64,
+    pub d_ref : AtomicI64,
     pub d_op : *mut DEntryOperations
 }
 
 
 impl DEntry
 {
-    pub fn dget(&mut self)
+    pub fn dget(&mut self) -> *mut Self
     {
         self.d_ref.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        self
+    }
+
+    pub const fn is_dir(&self) -> bool
+    {
+        unsafe
+        {
+            (*self.d_inode).is_dir()
+        }
+    }
+
+    pub const fn is_symlink(&self) -> bool
+    {
+        unsafe {            
+            (*self.d_inode).is_symlink()
+        }
     }
 
     pub fn dput(&mut self)
@@ -93,7 +134,7 @@ impl DEntry
         unsafe
         {
             let ptr = alloc::alloc::alloc(Layout::new::<Self>()) as *mut Self;
-            (*ptr) = Self { d_seq: RWLock::new(), d_parent: parent, d_inode: null_mut(), d_children: BTreeMap::new(), d_ref: AtomicI64::new(1), d_op: null_mut(), d_sb: null_mut() };
+            (*ptr) = Self { d_seq: RWLock::new(), d_parent: parent, d_inode: null_mut(), d_children: BTreeMap::new(), d_ref: AtomicI64::new(1), d_op: null_mut(), d_sb: null_mut(), d_flags: DEntryFlags::empty() };
             ptr
         }
     }

@@ -20,6 +20,7 @@ macro_rules! __constant_swap32 {
 }
 
 #[macro_export]
+#[cfg(target_endian = "little")]
 macro_rules! __le32_to_cpu {
     ($crc:ident) => {
         $crc
@@ -29,7 +30,20 @@ macro_rules! __le32_to_cpu {
     };
 }
 
+
 #[macro_export]
+#[cfg(target_endian = "big")]
+macro_rules! __le32_to_cpu {
+    ($crc:ident) => {
+        __constant_swap32!($crc)
+    };
+    ($crc:expr) => {
+        __constant_swap32!($crc)
+    };
+}
+
+#[macro_export]
+#[cfg(target_endian = "little")]
 macro_rules! __cpu_to_le32 {
     ($crc:ident) => {
         $crc
@@ -40,6 +54,7 @@ macro_rules! __cpu_to_le32 {
 }
 
 #[macro_export]
+#[cfg(target_endian = "little")]
 macro_rules! __be32_to_cpu {
     ($crc:ident) => {
         __constant_swap32!($crc)
@@ -50,6 +65,29 @@ macro_rules! __be32_to_cpu {
 }
 
 #[macro_export]
+#[cfg(target_endian = "big")]
+macro_rules! __cpu_to_le32 {
+    ($crc:ident) => {
+        __constant_swap32!($crc)
+    };
+    ($crc:expr) => {
+        __constant_swap32!($crc)
+    };
+}
+
+#[macro_export]
+#[cfg(target_endian = "big")]
+macro_rules! __be32_to_cpu {
+    ($crc:ident) => {
+        $crc
+    };
+    ($crc:expr) => {
+        $crc
+    };
+}
+
+#[macro_export]
+#[cfg(target_endian = "little")]
 macro_rules! __cpu_to_be32 {
     ($crc:ident) => {
         __constant_swap32!($crc)
@@ -59,3 +97,13 @@ macro_rules! __cpu_to_be32 {
     };
 }
 
+#[macro_export]
+#[cfg(target_endian = "big")]
+macro_rules! __cpu_to_be32 {
+    ($crc:ident) => {
+        $crc
+    };
+    ($crc:expr) => {
+        $crc
+    };
+}

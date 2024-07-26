@@ -1,3 +1,5 @@
+use core::{intrinsics::unlikely, ptr::null_mut};
+
 use alloc::vec::Vec;
 
 use super::process;
@@ -17,6 +19,6 @@ pub fn get_current_running_process() -> *mut process::PCB
 {
     unsafe
     {
-        return RUNNING_PROCESS[0]
+        RUNNING_PROCESS[0]
     }
 }
