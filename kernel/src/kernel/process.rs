@@ -205,9 +205,30 @@ pub fn sys_exit(error_code : i64)
 
 fn do_exit(error_code : i64)
 {
-    let pcb = get_current_running_process();
-    PCB::distory_task_control_block(pcb);
-    sys_yield();
+    unsafe
+    {
+        let pcb = get_current_running_process();
+        PCB::distory_task_control_block(pcb);
+        match WAIT_MAP.first_entry() {
+            Some(mut entry) => 
+            {
+                match entry.get_mut().pop_front() {
+                    Some(next_process) => 
+                    {
+                        if likely(entry.get_mut().is_empty())
+                        {
+                            entry.remove();
+                        }
+                        else {
+                            task_switch(next_process);
+                        }
+                    },
+                    None => panic!("next process can't be empty!"),
+                }
+            },
+            None => task_switch(IDLE),
+        }
+    }
 }
 
 impl ProcessControlBlock {

@@ -1,6 +1,6 @@
 use core::{ptr::null_mut, ffi::{c_void, c_char}};
-use crate::{fs::file::sys_write, logk, kernel::{process::{self, sys_yield}, fork::sys_fork, sched::get_current_running_process}, bochs_break};
-
+use crate::{fs::file::sys_write, logk, kernel::{process::{self, sys_yield, sys_exit}, fork::sys_fork, sched::get_current_running_process}, bochs_break};
+use crate::kernel::execve::sys_execve;
 use super::{cpu, process::PtRegs, interrupt::HANDLER_TABLE};
 use core::arch::asm;
 
@@ -14,7 +14,9 @@ pub const __NR_READ : usize = 0;
 pub const __NR_WRITE : usize = 1;
 pub const __NR_SCHED_YIELD : usize = 24;
 pub const __NR_FORK : usize = 57;
+pub const __NR_SYS_EXECVE : usize = 59;
 pub const __NR_EXIT : usize = 60;
+
 #[no_mangle]
 pub static mut SYSTEM_CALL_TABLE : [SyscallrFn; 256] = [unsafe { core::mem::transmute::<*mut(), SyscallrFn>(default_syscall as *mut()) }; 256];
 
@@ -181,5 +183,8 @@ pub fn syscall_init()
         SYSTEM_CALL_TABLE[__NR_WRITE] = core::mem::transmute::<*mut(), SyscallrFn>(sys_write as *mut());
         SYSTEM_CALL_TABLE[__NR_SCHED_YIELD] = core::mem::transmute::<*mut(), SyscallrFn>(sys_yield as *mut());
         SYSTEM_CALL_TABLE[__NR_FORK] = core::mem::transmute::<*mut(), SyscallrFn>(sys_fork as *mut());
+        SYSTEM_CALL_TABLE[__NR_SYS_EXECVE] = core::mem::transmute::<*mut(), SyscallrFn>(sys_execve as *mut());
+        SYSTEM_CALL_TABLE[__NR_EXIT] = core::mem::transmute::<*mut(), SyscallrFn>(sys_exit as *mut());
+ 
     }
 }

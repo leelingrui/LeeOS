@@ -3,21 +3,13 @@
 #![feature(start)]
 use core::{panic::PanicInfo, ffi::c_char};
 use lee_os::fs::file::STDOUT;
-use lib::unistd::{self, write, fork};
+use lib::unistd::{self, write, fork, exit};
 #[panic_handler]
 pub fn panic(_info: &PanicInfo) -> !
 {
     // printk!("{_info}\n");
+    exit(-1);
     loop { }
-}
-
-
-#[start]
-#[no_mangle]
-extern "C" fn _start()
-{
-    main();
-    loop{};
 }
 
 fn main()
