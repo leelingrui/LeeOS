@@ -1,7 +1,7 @@
-use core::{alloc::Layout, ffi::c_char, mem::ManuallyDrop, ptr::{self, addr_of_mut, null_mut}, sync::atomic::AtomicI64};
+use core::{alloc::Layout, ffi::c_char, mem::ManuallyDrop, ptr::{self, addr_of_mut, addr_of, null_mut}, sync::atomic::AtomicI64};
 use alloc::{collections::BTreeMap, string::{String, ToString}};
 
-use crate::kernel::semaphore::RWLock;
+use crate::kernel::{semaphore::RWLock, errno_base::{ENOSPC, err_ptr}};
 
 use super::{file::{FileMode, LogicalPart, FS}, inode::Inode};
 
@@ -89,12 +89,29 @@ pub struct DEntry
     pub d_inode : *mut Inode,
     d_children : BTreeMap<String, *mut DEntry>,
     pub d_ref : AtomicI64,
-    pub d_op : *mut DEntryOperations
+    pub d_op : *mut DEntryOperations,
+    name : String
 }
 
 
 impl DEntry
 {
+    pub fn make_root(root_inode : *mut Inode) -> *mut Self
+    {
+        unsafe
+        {
+            let dcache = Self::empty(null_mut());
+            if !dcache.is_null()
+            {
+                (*dcache).d_inode = root_inode;
+                (*dcache).d_op = (*(*root_inode).logical_part_ptr).s_d_op;
+                (*dcache).d_sb = (*root_inode).logical_part_ptr;
+                // (*dcache).d_flags = (*(*dcache).d_sb).s_flags;
+            }
+            dcache
+        }
+    }
+
     pub fn dget(&mut self) -> *mut Self
     {
         self.d_ref.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -123,6 +140,7 @@ impl DEntry
             let prev = self.d_ref.fetch_sub(1, core::sync::atomic::Ordering::AcqRel);
             if prev == 1
             {
+                (*self.d_parent).d_children.remove(&self.name);
                 ptr::drop_in_place(self);
                 alloc::alloc::dealloc(self as *mut Self as *mut u8, Layout::new::<Self>());
             }
@@ -134,10 +152,14 @@ impl DEntry
         unsafe
         {
             let ptr = alloc::alloc::alloc(Layout::new::<Self>()) as *mut Self;
-            (*ptr) = Self { d_seq: RWLock::new(), d_parent: parent, d_inode: null_mut(), d_children: BTreeMap::new(), d_ref: AtomicI64::new(1), d_op: null_mut(), d_sb: null_mut(), d_flags: DEntryFlags::empty() };
+            if (ptr.is_null())
+             {
+                return err_ptr(-ENOSPC);
+            }
+            (*ptr) = Self { d_seq: RWLock::new(), d_parent: parent, d_inode: null_mut(), d_children: BTreeMap::new(), d_ref: AtomicI64::new(1), d_op: null_mut(), d_sb: null_mut(), d_flags: DEntryFlags::empty(), name: String::new() };
             ptr
-        }
-    }
+         }
+    }   
 
     pub fn look_up(&mut self, name : &String) -> *mut DEntry
     {
@@ -174,10 +196,20 @@ impl DEntry
 
     pub fn new_child(&mut self, name : &String) -> *mut Self
     {
-        self.d_seq.wrlock();
-        let child = Self::empty(self as *mut Self);
-        self.d_children.insert(name.to_string(), child);
-        self.d_seq.wrunlock();
-        child
+        unsafe
+        {
+            self.d_seq.wrlock();
+            let child = Self::empty(self as *mut Self);
+            (*child).name = name.to_string();
+            self.d_children.insert((*child).name.to_string(), child);
+            self.d_ref.fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+            self.d_seq.wrunlock();
+            child
+        }
+    }
+
+    pub fn cant_mount(&self) -> bool
+    {
+        self.d_flags.contains(DEntryFlags::CANT_MOUNT)
     }
 }

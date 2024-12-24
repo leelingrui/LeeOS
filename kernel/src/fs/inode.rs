@@ -6,12 +6,13 @@ use super::{dcache::DEntry, ext4::{ext4_find_entry, ext4_load_all_entries, Ext4I
 
 pub type InodeLoopUp = fn(*mut Inode, *mut DEntry, u64) -> *mut DEntry;
 pub type InodeMknode = fn(*mut MntIdmap, *mut Inode, *mut DEntry, FileMode, DevT) -> Err;
-
+pub type InodeMkdir = fn (*mut MntIdmap, *mut Inode, *mut DEntry, FileMode) -> Err;
 
 pub struct InodeOperations
 {
     pub lookup : Option<InodeLoopUp>,
-    pub mknod : Option<InodeMknode>
+    pub mknod : Option<InodeMknode>,
+    pub mkdir : Option<InodeMkdir>
 }
 
 pub struct Inode
@@ -45,6 +46,27 @@ impl Inode {
         }
     }
 
+    pub fn init_special_inode(&mut self, mode : FileMode, dev : DevT)
+    {
+        unsafe
+        {
+            self.i_mode = mode.clone();
+            match mode
+            { 
+                FileMode::IFBLK =>
+                {
+                    self.i_rdev = dev;
+                },
+                FileMode::IFCHR =>
+                {
+                    self.i_rdev = dev;
+                },
+                _ => panic!()
+            }
+        }
+    }
+
+    #[inline(always)]
     pub fn inc_nlink(&mut self)
     {
         self.i_nlink.fetch_add(1, core::sync::atomic::Ordering::Relaxed);

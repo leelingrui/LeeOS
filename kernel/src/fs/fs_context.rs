@@ -1,4 +1,4 @@
-use core::{alloc::Layout, ffi::{c_void, c_char}, iter::empty, ptr::null_mut};
+use core::{alloc::Layout, ffi::{c_void, c_char}, iter::empty, ptr::{null_mut, drop_in_place}};
 
 use alloc::{rc::Rc, string::String, sync::Arc};
 
@@ -130,7 +130,7 @@ fn vfs_parse_fs_param_source(fc : *mut FsContext, param : &mut FsParameter) -> E
 {
     unsafe
     {
-        if param.key == "source"
+        if param.key != "source"
         {
             return -ENOPARAM;
         }
@@ -163,7 +163,7 @@ fn vfs_parsefs_param(fc : *mut FsContext, param : &mut FsParameter) -> Err
         match (*(*fc).ops).parse_param {
             Some(func) => 
             {
-                ret = func(&*fc, &param);
+                ret = func(fc, param);
                 if ret != -ENOPARAM
                 {
                     return ret;
@@ -192,9 +192,9 @@ pub fn vfs_parse_fs_string(fc : *mut FsContext, key : &str, value : &Arc<String>
     vfs_parsefs_param(fc, &mut param)
 }
 
-pub type FsContextParseParamFn = fn(&FsContext, &FsParameter) -> Err;
-pub type FsContextGetTreeFn = fn(&FsContext) -> Err;
-pub type FsContextParseMonolithicFn = fn(&FsContext, *mut c_void) -> Err;
+pub type FsContextParseParamFn = fn(*mut FsContext, *mut FsParameter) -> Err;
+pub type FsContextGetTreeFn = fn(*mut FsContext) -> Err;
+pub type FsContextParseMonolithicFn = fn(*mut FsContext, *mut c_void) -> Err;
 
 pub struct FsContextOperations
 {
@@ -210,6 +210,7 @@ pub struct FsContext
     pub source : Arc<String>,
     pub root : *mut DEntry,
     pub fs_type : *mut FileSystemType,
+    pub fs_private : *mut c_void,
     pub sb_flags : u32,
     pub sb_flags_mask : u32,
     pub purpose : FsContextPurpose,
@@ -227,7 +228,11 @@ impl FsContext
 {
     pub fn puts_context(context : *mut Self)
     {
-
+        unsafe
+        {
+            drop_in_place(context);
+            alloc::alloc::dealloc(context.cast(), Layout::new::<Self>());
+        }
     }
 
     pub fn alloc_context(fs_type : *mut FileSystemType, refference : *mut DEntry, sb_flags : u32, sb_flags_mask : u32, purpose : FsContextPurpose) -> *mut Self
@@ -241,7 +246,7 @@ impl FsContext
             {
                 return err_ptr(-ENOMEM);
             }
-            (*fc) = Self { ops: null_mut(), mutex: Semaphore::new(1), source: Arc::new(String::from("none")), root: null_mut(), fs_type, sb_flags, sb_flags_mask, purpose, need_free: false };
+            (*fc) = Self { ops: null_mut(), mutex: Semaphore::new(1), source: Arc::new(String::new()), root: null_mut(), fs_type, sb_flags, sb_flags_mask, purpose, need_free: false, fs_private : null_mut() };
             match purpose {
                 FsContextPurpose::FsContextForMount => 
                 {
@@ -288,22 +293,22 @@ pub fn parse_monolithic_mount_data(fc : *mut FsContext, data : *mut c_void) -> E
             Some(func) => func,
             None => generic_parse_monolithic,
         };
-        monolithic_mount_data(&*fc, data)
+        monolithic_mount_data(fc, data)
     }
 }
 
-fn generic_parse_monolithic(fc : &FsContext, data : *mut c_void) -> Err
+fn generic_parse_monolithic(fc : *mut FsContext, data : *mut c_void) -> Err
 {
     vfs_parse_monolithic_sep(fc, data, vfs_parse_comma_sep)
 }
 
-fn vfs_parse_monolithic_sep(fc : &FsContext, data : *mut c_void, sep : fn(*mut *mut c_char) -> *mut c_char) -> Err
+fn vfs_parse_monolithic_sep(fc : *mut FsContext, data : *mut c_void, sep : fn(*mut *mut c_char) -> *mut c_char) -> Err
 {
     let options = data;
     if options.is_null()
     {
         return 0;
-    }
+    } 
     todo!();
 }
 

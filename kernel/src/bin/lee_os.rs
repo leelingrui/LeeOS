@@ -56,11 +56,8 @@ fn kernel_init()
         init_memory(0, core::ptr::null());
         ramdisk_init(); 
         init_shmem();
-        ide_init();
-        super_init();
         tss_init();
         clock_init();
-        init_filesystem();
         process_init();
         interrupt::set_interrupt_state(true);
         printk!("end call init");

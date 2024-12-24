@@ -2,7 +2,7 @@ use core::{ffi::{c_char, c_void, CStr}, ptr::null_mut, alloc::Layout};
 
 use alloc::{alloc::{alloc, dealloc}, collections::{BTreeMap, LinkedList}, vec::Vec};
 
-use crate::{fs::{ext4::Idx, dev}, logk};
+use crate::{fs::{ext4::Idx, dev, namei::sys_mknod, file::FileMode}, logk};
 
 use super::{process::{ProcessControlBlock, Priority}, list::ListHead, io::{IdeDiskT, IdePart}};
 static mut DEVICES : BTreeMap<DevT, Vec<Device>> = BTreeMap::<DevT, Vec<Device>>::new();
@@ -20,7 +20,7 @@ pub const DEV_NAME_LEN : usize = 64;
 pub const DEV_NULL : u32 = 0;
 
 #[inline(always)]
-pub fn mkdev(major : DevT, minor : DevT) -> DevT
+pub const fn mkdev(major : DevT, minor : DevT) -> DevT
 {
     major << 20 | minor
 }
@@ -240,10 +240,11 @@ pub fn regist_device(dev_no : DevT, ioctl_fn : Option<DeviceIoCtlFn>, read_fn : 
     }
 }
 
-pub fn device_install(dev_no : DevT, ptr : *mut c_void, name : &CStr, parent : DevT, flags : u32) -> DevT
+pub fn device_install(dev_no : DevT, ptr : *mut c_void, name : &CStr, parent : DevT, flags : u32, device_type : FileMode) -> DevT
 {
     unsafe
     {
+        let dev;
         match DEVICES.get_mut(&dev_no) {
             Some(target_list) => 
             {
@@ -258,9 +259,9 @@ pub fn device_install(dev_no : DevT, ptr : *mut c_void, name : &CStr, parent : D
                 };
                 compiler_builtins::mem::memcpy(device.name.as_ptr() as *mut u8, name.as_ptr() as *const u8, name.to_str().unwrap().len());
                 target_list.push(device);
-                mkdev(dev_no, minor)
+                dev = mkdev(dev_no, minor)
 
-            },
+             },
             None => 
             {
                 let mut target_list = Vec::<Device>::new();
@@ -276,9 +277,11 @@ pub fn device_install(dev_no : DevT, ptr : *mut c_void, name : &CStr, parent : D
                 compiler_builtins::mem::memcpy(device.name.as_ptr() as *mut u8, name.as_ptr() as *const u8, name.to_str().unwrap().len());
                 target_list.push(device);
                 DEVICES.insert(dev_no, target_list);
-                mkdev(dev_no, minor)
+                dev = mkdev(dev_no, minor)
             },
-        }
+        } 
+        sys_mknod(name.as_ptr(), device_type, dev);
+        dev
     }
 
 }

@@ -1,6 +1,6 @@
 use core::{alloc::Layout, ffi::c_void, mem::ManuallyDrop, ptr::{self, null_mut}};
 
-use alloc::{collections::BTreeMap, string::String};
+use alloc::{collections::{BTreeSet, BTreeMap}, string::String};
 
 use crate::{bit, kernel::{buffer::Buffer, semaphore::RWLock, Err}, mm::page::Pageflags};
 
@@ -58,14 +58,30 @@ pub const SB_I_TS_EXPIRY_WARNED : u32 = 0x00000400; /* warned about timestamp ra
 pub const SB_I_RETIRED : u32 = 0x00000800; /* superblock shouldn't be reused */
 pub const SB_I_NOUMASK : u32 = 0x00001000; /* VFS does not apply umask */
 
+bitflags::bitflags!
+{
+    #[derive(Clone)]
+    pub struct FileSystemFlags : u32
+    {
+        const REQUIRE_DEV = bit!(0);
+        const BINARY_MOUNTDATA = bit!(1);
+        const HAS_SUBTYPE = bit!(2);
+        const USERNS_MOUNT = bit!(3);
+        const DISALLOW_NOTIFY_PERM = bit!(4);
+        const ALLOW_IDMAP = bit!(5);
+        const RENAME_DOES_D_MOVE = 32768;
+    }
+}
 
+#[derive(Clone)]
 pub struct FileSystemType
 {
     pub name : &'static str,
     pub next : *mut Self,
     pub init_fs_context : Option<fn(*mut FsContext) -> Err>,
-    pub fs_supers :  BTreeMap<String, LogicalPart>,
-    pub kill_sb : Option<fn(*mut LogicalPart)>
+    pub fs_supers :  BTreeMap<String, *mut LogicalPart>,
+    pub kill_sb : Option<fn(*mut LogicalPart)>,
+    pub fs_flags : FileSystemFlags
 }
 
 pub struct AddressSpace

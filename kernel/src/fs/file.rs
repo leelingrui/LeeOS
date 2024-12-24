@@ -1,16 +1,25 @@
-use core::{alloc::Layout, ffi::{c_char, c_void, CStr}, intrinsics::unlikely, mem::size_of, ptr::null_mut, sync::atomic::{AtomicI64, AtomicU32}};
+use core::{alloc::Layout, ffi::{c_char, c_void, CStr}, intrinsics::{unlikely, ptr_offset_from}, mem::size_of, ptr::{null_mut, addr_of_mut}, sync::atomic::{AtomicI64, AtomicU32}};
 
 use alloc::{alloc::dealloc, collections::{BTreeMap, LinkedList}, rc::Rc, string::String, sync::Arc, vec::Vec};
 use proc_macro::__init;
 use crate::{crypto::crc32c::crc32c_le, kernel::{errno_base::{EBUSY, EINVAL, ENOTBLK}, io::SECTOR_SIZE, semaphore::Semaphore, string::strchr, Err}};
-use crate::{fs::ext4::{ext4_get_logic_block_idx, ext4_iget, ext4_load_block_bitmap, ext4_load_inode_bitmaps}, kernel::{bitmap::BitMap, buffer::Buffer, console::CONSOLE, device::DevT, errno_base::{EEXIST, EFAULT, ENOMEM, EPERM}, list::ListHead, math::{self, pow}, process::PCB, sched::get_current_running_process, semaphore::RWLock, Off}, mm::memory::PAGE_SIZE, printk};
+use crate::{fs::ext4::{ext4_get_logic_block_idx, ext4_init_fs, ext4_iget, ext4_load_block_bitmap, ext4_load_inode_bitmaps, EXT4_FS_TYPE}, kernel::{bitmap::BitMap, buffer::Buffer, console::CONSOLE, device::DevT, errno_base::{EEXIST, EFAULT, ENOMEM, EPERM}, list::ListHead, math::{self, pow}, process::PCB, sched::get_current_running_process, semaphore::RWLock, Off}, mm::{memory::PAGE_SIZE, shmem::{shmem_init_fs_context, init_shmem}}, printk};
 
-use super::{dcache::{DEntry, DEntryOperations}, ext4::{ext4_group_desc_csum, ext4_inode_block_read, ext4_inode_read, ext4_match_name, Ext4DirEntry2, Ext4GroupDesc, Ext4SuperBlock, Ext4SuperBlockInfo, Idx}, fs::{AddressSpace, FileSystemType}, fs_context::FsContext, inode::Inode, mnt_idmapping::MntIdmap, mount::Mount, namei::{named, namei}, path::Path};
+use super::{dcache::{DEntry, DEntryOperations}, ext4::{ext4_kill_sb, ext4_init_fs_context, ext4_group_desc_csum, ext4_inode_block_read, ext4_inode_read, ext4_match_name, Ext4DirEntry2, Ext4GroupDesc, Ext4SuperBlock, Ext4SuperBlockInfo, Idx}, fs::{AddressSpace, FileSystemType, FileSystemFlags}, fs_context::FsContext, inode::Inode, mnt_idmapping::MntIdmap, mount::{Mount, init_mount_tree}, namei::{named, namei}, path::Path, super_block::{kill_litter_super, mount_block_root}};
 pub static mut FS : FileSystem = FileSystem::new();
+pub static mut ROOTFS_FS_TYPE : FileSystemType = FileSystemType
+{
+    name: "rootfs",
+    next: null_mut(),
+    init_fs_context: Some(shmem_init_fs_context),
+    fs_supers: BTreeMap::new(),
+    kill_sb: Some(kill_litter_super),
+    fs_flags: FileSystemFlags::empty()
+};
 
 pub struct FileSystem
 {
-    logical_part : BTreeMap<DevT, LogicalPart>,
+    logical_part : BTreeMap<DevT, *mut LogicalPart>,
     iroot : *mut DEntry,
     root_dev : DevT,
     lock : Semaphore,
@@ -18,6 +27,7 @@ pub struct FileSystem
 }
 
 bitflags::bitflags! {
+    #[derive(PartialEq, Debug, Clone)]
     pub struct FileMode : u16
     {
         const IFMT = 0o170000;  // 文件类型（8 进制表示）
@@ -71,6 +81,7 @@ bitflags::bitflags!
         const O_NONBLOCK = 04000; // 非阻塞方式打开和操作文件
     }
 }
+
 pub struct File
 {
     pub flag : FileFlag,
@@ -102,9 +113,10 @@ pub fn init_filesystem()
 
 impl FileSystem {
     #[__init]
-    fn init(&mut self)
+    pub fn init(&mut self)
     {
-        self.iroot = DEntry::empty(null_mut());
+        mnt_init();
+        init_mount_tree();
     }
 
     // pub fn read_file_logic_block(&mut self, file_t : *mut FileStruct, block_idx : Idx) -> *mut Buffer
@@ -112,22 +124,50 @@ impl FileSystem {
         
     // }
     fn __get_fs_type(&mut self, name : &str) -> *mut *mut FileSystemType
+    { 
+        unsafe
+        {
+            let mut fs_ptr = addr_of_mut!(self.file_systems);
+            self.lock.acquire(1);
+            while !(*fs_ptr).is_null() {
+                if (**fs_ptr).name == name
+                {
+                    break;
+                 }
+                fs_ptr = addr_of_mut!((**fs_ptr).next);
+            } 
+            self.lock.release(1);
+            fs_ptr
+         }
+    }
+
+    pub fn list_bdev_fs_names(&mut self, mut buf : *mut c_char, mut size : usize) -> usize
     {
         unsafe
         {
-            let mut fs = null_mut();
+            let mut p;
+            let mut count = 0;
             self.lock.acquire(1);
-            let mut fs_ptr = &mut self.file_systems as *mut *mut FileSystemType;
-            while !fs_ptr.is_null() {
-                if (**fs_ptr).name == name
+            p = self.file_systems;
+            while !p.is_null()
+            {
+                if !(*p).fs_flags.contains(FileSystemFlags::REQUIRE_DEV)
                 {
-                    fs = fs_ptr;
+                    p = (*p).next;
+                    continue;
+                }
+                if size < (*p).name.len()
+                {
+                    printk!("truncating file system list\n");
                     break;
                 }
-                fs_ptr = &mut (**fs_ptr).next as *mut *mut FileSystemType;
+                compiler_builtins::mem::memcpy(buf.cast(), (*p).name.as_ptr().cast(), (*p).name.len());
+                buf = buf.offset((*p).name.len() as isize+ 1);
+                size -= (*p).name.len();
+                count += 1;
+                p = (*p).next;
             }
-            self.lock.release(1);
-            fs
+            count
         }
     }
 
@@ -142,7 +182,7 @@ impl FileSystem {
             self.lock.acquire(1);
 
             let p = self.__get_fs_type(&(*fs).name);
-            if !p.is_null()
+            if !(*p).is_null()
             {
                 return -EBUSY;
             }
@@ -163,24 +203,42 @@ impl FileSystem {
         }
     }
 
-    pub fn sget_dev(&mut self, fc : *mut FsContext, dev : DevT) -> &mut LogicalPart
+    pub fn sget_dev(&mut self, fc : *mut FsContext, dev : DevT) -> *mut LogicalPart
     {
         unsafe
         {
             if self.logical_part.contains_key(&dev)
             {
-                return self.logical_part.get_mut(&dev).unwrap();
-            }
+                return *self.logical_part.get_mut(&dev).unwrap();
+             }
             else {
                 self.logical_part.insert(dev, LogicalPart::new());
                 let sb = self.logical_part.get_mut(&dev).unwrap();
-                sb.s_dev = dev;
-                sb.s_flags = (*fc).sb_flags;
-                sb.fs_type = (*fc).fs_type;
-                sb
+                (**sb).s_dev = dev;
+                (**sb).s_flags = (*fc).sb_flags;
+                (**sb).fs_type = (*fc).fs_type;
+                *sb
+             }
+         }
+
+    } 
+
+    pub fn sget_fc(&mut self, fc : *mut FsContext, test : Option<fn(*mut LogicalPart, *mut FsContext) -> Err>, set : fn(*mut LogicalPart, *mut FsContext) -> Err) -> *mut LogicalPart
+    {
+        unsafe
+        {
+            loop
+            {
+                let mut lp = null_mut();
+                match test
+                {
+                    Some(testfn) => todo!(),
+                    None => {},
+                }
+                lp = LogicalPart::new();
+                return lp;
             }
         }
-
     }
 
     pub fn get_fs_type(&mut self, name : Arc<String>) -> *mut FileSystemType
@@ -188,8 +246,20 @@ impl FileSystem {
         unsafe
         {
             let fs;
+            let primname;
             let dot = strchr(name.as_ptr() as *const c_char, '.' as c_char);
-            let primname = String::from_raw_parts(name.as_ptr() as *mut u8, dot.offset_from(name.as_ptr() as *mut c_char) as usize, dot.offset_from(name.as_ptr() as *mut c_char) as usize);
+            let tmp;
+            if !dot.is_null()
+            {
+                let sub_str = &name[..ptr_offset_from(name.as_ptr(), dot.cast()) as usize];
+                tmp = String::from(&name[..ptr_offset_from(name.as_ptr(), dot.cast()) as usize]);
+                primname = &tmp;
+            }
+            else
+            {
+                primname = &name;
+            }
+            let len = ptr_offset_from(name.as_ptr(), dot.cast()); 
             fs = self.__get_fs_type(&primname);
             *fs
         }
@@ -199,7 +269,7 @@ impl FileSystem {
     pub fn get_logical_part(&mut self, dev : DevT) -> *mut LogicalPart
     {
         match self.logical_part.get_mut(&dev) {
-            Some(logic_part) => logic_part as *mut LogicalPart,
+            Some(logic_part) => *logic_part,
             None => null_mut(),
         }
     }
@@ -212,8 +282,8 @@ impl FileSystem {
             match logic_part {
                 Some(part) => 
                 {
-                    match part.old_fs_type {
-                        FSType::Ext4 => ext4_inode_block_read(part, inode_t, block_idx),
+                    match (**part).old_fs_type {
+                        FSType::Ext4 => ext4_inode_block_read(*part, inode_t, block_idx),
                         _ => panic!("unsupport fs type!\n"),
                     }
                 },
@@ -230,8 +300,8 @@ impl FileSystem {
             match logic_part {
                 Some(part) => 
                 {
-                    match part.old_fs_type {
-                        FSType::Ext4 => ext4_inode_block_read(part, (*file_t).inode, block_idx),
+                    match (**part).old_fs_type {
+                        FSType::Ext4 => ext4_inode_block_read(*part, (*file_t).inode, block_idx),
                         _ => panic!("unsupport fs type!\n"),
                     }
                 },
@@ -261,19 +331,66 @@ impl FileSystem {
             match logical_part {
                 Some(x) => 
                 {
-                    x.release_file(file_t);
+                    (**x).release_file(file_t);
                 },
                 None => panic!("no device {}", (*(*file_t).inode).dev),
             }
         }
     }
 
-    pub fn mknod(&mut self, name : *mut c_char, mode : FileMode) -> Err
+    pub fn mkdir(&mut self, pathname : *const c_char, mode : FileMode) -> Err
     {
         unsafe
         {
             let mut next = null_mut();
-            let parent = named(name, &mut next);
+            let name_len = compiler_builtins::mem::strlen(pathname.cast());
+            let layout = Layout::from_size_align(name_len, 8).unwrap();
+            let tmp_name = alloc::alloc::alloc(layout) as *mut c_char;
+            compiler_builtins::mem::memcpy(tmp_name.cast(), pathname.cast(), name_len);
+            let parent = named(pathname, &mut next);
+            if parent.dentry.is_null()
+            {
+                alloc::alloc::dealloc(tmp_name.cast(), layout);
+                return -EEXIST;
+            }
+            let idmap = MntIdmap::new();
+            let mut child = (*parent.dentry).new_child(&String::from(CStr::from_ptr(next).to_str().unwrap()));
+            alloc::alloc::dealloc(tmp_name.cast(), layout);
+            if unlikely(child.is_null())
+            {
+                return -ENOMEM;
+            }
+            let old = match (*(*(*parent.dentry).d_inode).i_operations).lookup
+            {
+                Some(lookup) => 
+                {
+                    printk!("{:?}", lookup);
+                    lookup((*parent.dentry).d_inode, child, 0)
+                },
+                None => return -EFAULT,
+            };
+            
+            if unlikely(!old.is_null())
+            {
+                (*child).dput();
+                child = old;
+            }
+            Self::do_mkdir(idmap, (*parent.dentry).d_inode, child, mode)
+        }
+    }
+
+    pub fn mknodat(&mut self, dfd : u32, name : *const c_char, mode : FileMode, dev : DevT) -> Err
+    {
+        unsafe
+        {
+            let name_len = compiler_builtins::mem::strlen(name);
+            if name_len > PAGE_SIZE
+            {
+                return -EPERM;   
+            }
+            let mut sname = String::from_raw_parts(name.cast_mut().cast(), name_len + 1, PAGE_SIZE).clone();
+            let mut next = null_mut();
+            let parent = named(sname.as_mut_ptr().cast(), &mut next);
             if parent.dentry.is_null()
             {
                 return -EEXIST;
@@ -290,16 +407,33 @@ impl FileSystem {
                 None => return -EFAULT,
             };
             
-            if unlikely(old.is_null())
+            if unlikely(!old.is_null())
             {
                 (*child).dput();
                 child = old;
             }
 
-            Self::do_mknodat(idmap, (*parent.dentry).d_inode, child, mode, (*(*parent.dentry).d_inode).dev)
+            Self::do_mknodat(idmap, (*parent.dentry).d_inode, child, mode, dev)
         }
     }
-
+    pub fn do_mkdir(idmap : *mut MntIdmap, dir : *mut Inode, dentry : *mut DEntry, mode : FileMode) -> Err
+    {
+        unsafe
+        {
+            if (*dir).i_mode.intersects(FileMode::IFDIR)
+            {
+                return -EPERM;
+            }
+            if let Some(mkdir) = (*(*dir).i_operations).mkdir
+            {
+                mkdir(idmap, dir, dentry, mode)
+            }
+            else
+            {
+                -EPERM
+            }
+        }
+    }
     pub fn do_mknodat(idmap : *mut MntIdmap, dir : *mut Inode, dentry : *mut DEntry, mode : FileMode, dev : DevT) -> Err
     {
         unsafe
@@ -354,7 +488,7 @@ impl FileSystem {
             let logic_part = self.logical_part.get_mut(&(*inode).dev);
             if logic_part.is_some()
             {
-                logic_part.unwrap().read_inode(inode, buffer, len, offset)
+                (**logic_part.unwrap()).read_inode(inode, buffer, len, offset)
             }
             else {
                 panic!("not fund device {}\n", &(*inode).dev);
@@ -689,9 +823,14 @@ impl LogicalPart {
         }
     }
 
-    pub fn new() -> Self
+    pub fn new() -> *mut Self
     {
-        Self { old_fs_type: FSType::None, logic_block_size: 0, logic_block_count: 0, inode_count: 0, s_dev: 0, data_map: BTreeMap::new(), s_d_op: null_mut(), s_root: null_mut(), sb_mount: null_mut(), s_sbi: null_mut(), fs_type: null_mut(), s_flags: 0, s_mounts: ListHead::empty() }
+        unsafe
+        {
+            let ptr = alloc::alloc::alloc(Layout::new::<Self>()).cast();
+            *ptr = Self { old_fs_type: FSType::None, logic_block_size: 0, logic_block_count: 0, inode_count: 0, s_dev: 0, data_map: BTreeMap::new(), s_d_op: null_mut(), s_root: null_mut(), sb_mount: null_mut(), s_sbi: null_mut(), fs_type: null_mut(), s_flags: 0, s_mounts: ListHead::empty() };
+            ptr
+        }
     }
 
     pub fn read_block(&self, logic_block_no : usize) -> *mut Buffer
@@ -756,7 +895,7 @@ fn get_device_buffer(dev : DevT, block : Idx) -> *mut Buffer
         let buffer;
         if logic_part.is_some()
         {
-            buffer = logic_part.unwrap().get_buffer(block);
+            buffer = (**logic_part.unwrap()).get_buffer(block);
         }
         else
         {
@@ -795,4 +934,19 @@ pub fn sys_write(fd : FileDescriptor, buf : *const c_void, count : usize)
             CONSOLE.write(buf as *const c_char, count);
         }
     }
+}
+
+pub fn init_rootfs()
+{
+    unsafe
+    {
+        FS.register_filesystem(addr_of_mut!(ROOTFS_FS_TYPE));
+    }
+}
+
+pub fn mnt_init()
+{
+    init_rootfs();
+    init_shmem();
+    ext4_init_fs();
 }

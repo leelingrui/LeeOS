@@ -16,7 +16,7 @@ use proc_macro::__init;
 use crate::fs::PART_FS_EXTENDED;
 use crate::fs::ext4::PartEntry;
 use crate::fs::ext4::Idx;
-use crate::fs::file::EOF;
+use crate::fs::file::{EOF, FileMode, FS};
 use crate::kernel::interrupt::get_interrupt_state;
 use crate::logk;
 use crate::mm;
@@ -502,8 +502,14 @@ unsafe fn ide_part_init(disk : &mut IdeDiskT)
 #[__init]
 pub fn ide_init()
 {
-    ide_ctrl_init();
-    ide_install();
+    unsafe
+    {
+        FS.mkdir("/dev\0".as_ptr().cast(), FileMode::IFDIR);
+        ide_ctrl_init();
+        FS.mkdir("/dev\0".as_ptr().cast(), FileMode::IFDIR);
+        ide_ctrl_init();
+        ide_install();
+    }
 }
 
 
@@ -528,7 +534,7 @@ fn ide_install()
                     didx += 1;
                     continue;
                 }
-                let dev_t = device_install(252, disk as *const IdeDiskT as *mut c_void, CStr::from_ptr(disk.name.as_ptr()),0, 0);
+                let dev_t = device_install(252, disk as *const IdeDiskT as *mut c_void, CStr::from_ptr(disk.name.as_ptr()),0, 0, FileMode::IFBLK);
                 didx += 1;
                 let mut i = 0;
                 while i < IDE_PART_NR {
@@ -536,7 +542,7 @@ fn ide_install()
                     if part.count != 0
                     {
                         device_install(259, part as *const IdePart as *mut c_void, CStr::from_ptr(part.name.as_ptr()), dev_t,
-                              0);
+                              0, FileMode::IFBLK);
                     }
                     i += 1;
                 }

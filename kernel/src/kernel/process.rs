@@ -1,9 +1,8 @@
 use core::{alloc::{GlobalAlloc, Layout}, arch::asm, cell::OnceCell, cmp, ffi::{c_char, c_void}, mem::size_of, ptr::{addr_of_mut, null, null_mut}};
 use core::intrinsics::{likely, unlikely};
-
 use alloc::{collections::{BinaryHeap, btree_map, LinkedList}, vec::Vec};
 use proc_macro::__init;
-use crate::{crypto::crc32c::init_crc32, fs::{dcache::DEntry, file::{File, FS}, namei::Fd, path::Path, super_block::super_init}, kernel::{clock::clock_init, fpu::fpu_init, global::{set_tss64, KERNEL_TSS}, idle, interrupt::{self, interrupt_disable, set_interrupt_state}, io::ide_init, keyboard::keyboard_init, sched::{self, get_current_running_process, set_running_process}, syscall::syscall_init, time::time_init}, logk, mm::{memory::{get_cr3_reg, set_cr3_reg, Pml4, USER_STACK_TOP}, mm_type::{self, MmapType}}, printk};
+use crate::{crypto::crc32c::init_crc32, fs::{dcache::DEntry, file::{File, FS}, namei::Fd, path::Path, super_block::{super_init, mount_block_root}}, kernel::{clock::clock_init, fpu::fpu_init, global::{set_tss64, KERNEL_TSS}, idle, interrupt::{self, interrupt_disable, set_interrupt_state}, io::ide_init, keyboard::keyboard_init, sched::{self, get_current_running_process, set_running_process}, syscall::syscall_init, time::time_init}, logk, mm::{memory::{get_cr3_reg, set_cr3_reg, Pml4, USER_STACK_TOP}, mm_type::{self, MmapType}}, printk};
 pub type Priority = u8;
 use crate::mm::memory;
 
@@ -79,6 +78,9 @@ extern "C" {
 fn init_thread()
 {
     logk!("kernel init!\n");
+    super_init();
+    ide_init();
+    mount_block_root("/dev/sda\0".as_ptr().cast());
     time_init();
     fpu_init();
     keyboard_init();
@@ -264,9 +266,19 @@ impl ProcessControlBlock {
         self.iroot.clone()
     }
 
+    pub fn set_iroot(&mut self, path : &Path)
+    {
+        self.iroot = path.clone();
+    }
+
     pub fn get_ipwd(&mut self) -> Path
     {
         self.ipwd.clone()
+    }
+
+    pub fn set_ipwd(&mut self, path : &Path)
+    {
+        self.ipwd = path.clone();
     }
 
     pub fn build_task_stack(&mut self)
@@ -354,8 +366,6 @@ impl ProcessControlBlock {
             (*process_frame).rbp = 6;
             (*process_frame).rip = func_addr;
             (*pcb_addr).priority = prio;
-            (*pcb_addr).ipwd = FS.get_froot();
-            (*pcb_addr).iroot = FS.get_froot();
             (*pcb_addr).pid = -1;
             pcb_addr
         }

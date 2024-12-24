@@ -5,7 +5,7 @@ use proc_macro::__init;
 
 use crate::{crypto::{crc16::crc16, crc32c::{crc32c_le, reverse32, reverse8}}, fs::file::{FSType, EOF, FS}, kernel::{bitmap::BitMap, buffer::{self, Buffer}, device::{device_ioctl, DevT, DEV_CMD_SECTOR_COUNT}, errno_base::EINVAL, io::SECTOR_SIZE, math::{self, log2, pow}, sched::get_current_running_process, string::{memset, EOS}, time::sys_time, Err}, mm::memory::PAGE_SIZE};
 
-use super::{dcache::DEntry, dev::{new_decode_dev, old_decode_dev}, file::{disk_read, early_disk_read, DirEntry, FSPermission, FileMode, FileSystem, LogicalPart}, fs::FileSystemType, fs_context::{self, FsContext, FsContextOperations}, inode::Inode, namei::namei, super_block::get_tree_bdev};
+use super::{dcache::DEntry, dev::{new_decode_dev, old_decode_dev}, file::{disk_read, early_disk_read, DirEntry, FSPermission, FileMode, FileSystem, LogicalPart}, fs::{FileSystemType, FileSystemFlags}, fs_context::{self, FsContext, FsContextOperations}, inode::Inode, namei::namei, super_block::get_tree_bdev};
 
 
 
@@ -71,6 +71,7 @@ pub static mut EXT4_FS_TYPE : FileSystemType = FileSystemType
     init_fs_context: Some(ext4_init_fs_context),
     fs_supers: BTreeMap::new(),
     kill_sb: Some(ext4_kill_sb),
+    fs_flags: FileSystemFlags::from_bits_truncate(FileSystemFlags::REQUIRE_DEV.bits() | FileSystemFlags::ALLOW_IDMAP.bits())
 };
 
 #[__init]
@@ -96,7 +97,7 @@ pub fn ext4_kill_sb(sb : *mut LogicalPart)
 pub static mut EXT4_CONTEXT_OPS : FsContextOperations = FsContextOperations
 {
     parse_param: None,
-    get_tree: None,
+    get_tree: Some(ext4_get_tree),
     parse_monolithic: None
 };
 
@@ -123,13 +124,29 @@ impl Ext4GroupDescInfo {
                 FSType::Ext4 => 
                 {
                     assert!(!self.group_desc_ptr.is_null());
-                    ext4_load_block_bitmap(self);
                     ext4_load_inode_bitmaps(self);
+                    ext4_load_block_bitmap(self);
                 },
                 FSType::None => panic!("unknow filesystem!"),
                 FSType::Shmem => todo!(),
             }
 
+        }
+    }
+}
+
+impl Ext4SuperBlockInfo
+{
+    pub fn new() -> *mut Self
+    {
+        unsafe
+        {
+            let ptr = alloc::alloc::alloc(Layout::new::<Self>()).cast::<Self>();
+            ptr.write(Self
+            {
+                super_block: null_mut(), group_desc: Vec::new(), inode_per_group: 0, blocks_per_group: 0, inode_count: 0, s_csum_seed: 0
+            });
+            ptr
         }
     }
 }
@@ -279,7 +296,9 @@ fn ext4_load_super(sb : &mut LogicalPart) -> Err
     {
         let es = alloc::alloc::alloc(Layout::new::<[c_void; 1024]>());
         let block1 = early_disk_read(sb.s_dev, 2, 2);
+        sb.s_sbi = Ext4SuperBlockInfo::new().cast();
         (*block1).read_from_buffer(es as *mut c_void, 0, 1024);
+        (*sb.s_sbi.cast::<Ext4SuperBlockInfo>()).super_block = es.cast();
         (*block1).dispose();
         0
     }
@@ -297,23 +316,23 @@ fn ext4_load_group_desc(dev : DevT, idx : Idx) -> *mut Ext4GroupDesc
 
 }
 
-pub fn ext4_fill_super(lp : &mut LogicalPart, fs_context : &mut FsContext) -> Err
+pub fn ext4_fill_super(lp : *mut LogicalPart, fs_context : *mut FsContext) -> Err
 {
     unsafe
     {
-        let dentry = namei(fs_context.source.as_ptr() as *mut c_char);
-        ext4_load_super(lp);
-        let raw_super_block = (*(lp.s_sbi as *mut Ext4SuperBlockInfo)).super_block as *mut Ext4SuperBlock;
+        let dentry = namei((*fs_context).source.as_ptr() as *mut c_char);
+        ext4_load_super(&mut *lp);
+        let raw_super_block = (*((*lp).s_sbi as *mut Ext4SuperBlockInfo)).super_block as *mut Ext4SuperBlock;
         let result = crc32c_le(!0, raw_super_block as *const c_void, size_of::<Ext4SuperBlock>()); // check crc;
         if result != 0
-        {
+        { 
             return -EINVAL;
         }
-        lp.old_fs_type = FSType::Ext4;
-        lp.logic_block_size = pow(2.0, (*raw_super_block).s_log_block_size as f64) as i32;
-        lp.logic_block_count = (((*raw_super_block).s_blocks_count_hi as usize) << 32) + (*raw_super_block).s_blocks_count_lo as usize;
-        lp.inode_count = (*raw_super_block).s_inodes_count as usize;
-        let sbi = lp.s_sbi as *mut Ext4SuperBlockInfo;
+        (*lp).old_fs_type = FSType::Ext4;
+        (*lp).logic_block_size = pow(2.0, (*raw_super_block).s_log_block_size as f64) as i32;
+        (*lp).logic_block_count = (((*raw_super_block).s_blocks_count_hi as usize) << 32) + (*raw_super_block).s_blocks_count_lo as usize;
+        (*lp).inode_count = (*raw_super_block).s_inodes_count as usize;
+        let sbi = (*lp).s_sbi as *mut Ext4SuperBlockInfo;
         (*sbi).inode_per_group = (*raw_super_block).s_inodes_per_group as usize;
         (*sbi).blocks_per_group = (*raw_super_block).s_blocks_per_group as usize;
         (*sbi).s_csum_seed = crc32c_le(!0, (*raw_super_block).s_uuid.as_ptr() as *const c_void, 16);
@@ -321,22 +340,28 @@ pub fn ext4_fill_super(lp : &mut LogicalPart, fs_context : &mut FsContext) -> Er
         let group_num = ((*raw_super_block).s_blocks_count_lo as i64 + (((*raw_super_block).s_blocks_count_hi as i64) << 32)).div_ceil((*raw_super_block).s_blocks_per_group as i64);
         // init group desc
         while var < group_num {
-            let desc = ext4_load_group_desc(lp.s_dev, var as Idx);
-            let group_desc_checksum = ext4_group_desc_csum(&lp, 0 as u32, desc);
+            let desc = ext4_load_group_desc((*lp).s_dev, var as Idx);
+            let group_desc_checksum = ext4_group_desc_csum(&*lp, 0 as u32, desc);
             if group_desc_checksum != (*desc).bg_checksum as u16
             {
                 return -EINVAL;
             }
-            let sbi = lp.s_sbi as *mut Ext4SuperBlockInfo;
-            (*sbi).group_desc.push(Ext4GroupDescInfo::new(lp));
+            let sbi = (*lp).s_sbi as *mut Ext4SuperBlockInfo;
+            (*sbi).group_desc.push(Ext4GroupDescInfo::new(&*lp));
             let new_desc = (*sbi).group_desc.last_mut().unwrap();
             new_desc.group_desc_ptr = desc as *mut c_void;
             new_desc.load_bitmaps();
             new_desc.inode_table_offset = (((*desc).bg_inode_table_hi as u64) << 32) + (*desc).bg_inode_table_lo as u64;
-            new_desc.data_block_start = new_desc.inode_table_offset as usize + math::upround((*raw_super_block).s_inodes_per_group as u64 * 256, lp.logic_block_size as u64 * 1024) as usize / (lp.logic_block_size as usize * 1024);
+            new_desc.data_block_start = new_desc.inode_table_offset as usize + math::upround((*raw_super_block).s_inodes_per_group as u64 * 256, (*lp).logic_block_size as u64 * 1024) as usize / ((*lp).logic_block_size as usize * 1024);
             var += 1;
         }
-        0
+        let inode =(*lp).iget(2);
+        (*lp).s_root = DEntry::make_root(inode);
+        if !(*lp).s_root.is_null()
+        {
+            return 0;
+        }
+        todo!();
     }
 }
 
@@ -681,15 +706,15 @@ pub fn ext2_or_ext3_get_logic_block_idx(logical_part : &mut LogicalPart, inode :
     get_logic_block(logical_part, inode, EXT4_N_BLOCKS as u64 - 1, create, level)
 }
 
-pub fn ext4_inode_block_read(logical_part : &mut LogicalPart, inode : *mut Inode, mut block_idx : Idx) -> *mut Buffer
+pub fn ext4_inode_block_read(logical_part : *mut LogicalPart, inode : *mut Inode, mut block_idx : Idx) -> *mut Buffer
 {
     unsafe
     {
-        block_idx = logical_part.get_logic_block_idx(inode, block_idx, false);
-        let buffer = logical_part.get_buffer(block_idx);
+        block_idx = (*logical_part).get_logic_block_idx(inode, block_idx, false);
+        let buffer = (*logical_part).get_buffer(block_idx);
         if !(*buffer).is_avaliable()
         {
-            (*buffer).read_from_device(logical_part.s_dev, block_idx * 2 * logical_part.logic_block_size as Idx, 2 * logical_part.logic_block_size as usize);
+            (*buffer).read_from_device((*logical_part).s_dev, block_idx * 2 * (*logical_part).logic_block_size as Idx, 2 * (*logical_part).logic_block_size as usize);
         }
         buffer
     }
@@ -733,7 +758,7 @@ pub fn ext4_load_inode_bitmaps(gbi : &mut Ext4GroupDescInfo)
         let idx = (((*grop_desc).bg_inode_bitmap_hi as usize) << 32) | (*grop_desc).bg_inode_bitmap_lo as usize;
         let inode_map_buffer = (*gbi.parent).read_block(idx);
         let inode_map = alloc::alloc::alloc(Layout::new::<[c_void; PAGE_SIZE]>());
-        let raw_super_block = ((*gbi.parent).s_sbi as *mut Ext4SuperBlockInfo) as *mut Ext4SuperBlock;
+        let raw_super_block = (*((*gbi.parent).s_sbi as *mut Ext4SuperBlockInfo)).super_block as *mut Ext4SuperBlock;
         let size = (*raw_super_block).s_inodes_per_group / 8;
         (*inode_map_buffer).read_from_buffer(inode_map as *mut c_void, 0, 1024 * (*gbi.parent).logic_block_size as usize);
         let calculated = crc32c_le((*((*gbi.parent).s_sbi as *const Ext4SuperBlockInfo)).s_csum_seed, inode_map as *const c_void, size as usize);
@@ -1065,7 +1090,7 @@ pub union Osd1 {
     pub m_ireserved1 : u32,
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 pub struct Ext4SuperBlock
 {
     pub s_inodes_count : u32,		/* Inodes count */
@@ -1164,7 +1189,7 @@ pub struct Ext4SuperBlock
     pub s_error_count : i32,		/* number of fs errors */
     pub s_first_error_time : i32,	/* first time an error happened */
     pub s_first_error_ino : i32,	/* inode involved in first error */
-    pub s_first_error_block : i16,	/* block involved of first error */
+    pub s_first_error_block : i64,	/* block involved of first error */
     pub s_first_error_func : [u8; 32],	/* function where the error happened */
     pub s_first_error_line : i32,	/* line number where error happened */
     pub s_last_error_time : i32,	/* most recent time of an error */

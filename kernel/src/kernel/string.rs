@@ -42,13 +42,17 @@ pub unsafe fn strsep(stringp : *mut *mut c_char, delim : *const c_char) -> *mut 
             {
                 *ptr = 0 as c_char;
                 *stringp = ptr.offset(1);
+                if **stringp == EOS
+                {
+                    *stringp = null_mut();
+                }
                 return first;
             }
             d_p = d_p.offset(1);
         }
         if *ptr == EOS
         {
-            *stringp == null_mut();
+            *stringp = null_mut();
             return first;
         }
         ptr = ptr.offset(1);

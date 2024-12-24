@@ -3,7 +3,7 @@ use core::{ffi::{c_void, CStr, c_char}, alloc::Layout};
 use alloc::{vec::Vec, alloc::alloc, string::String};
 use proc_macro::__init;
 
-use crate::{fs::ext4::Idx, mm::memory::PAGE_SIZE};
+use crate::{fs::{ext4::Idx, file::FileMode}, mm::memory::PAGE_SIZE};
 
 use super::device::{DEV_CMD_SECTOR_COUNT, DEV_CMD_SECTOR_START, DevT, device_install, regist_device, DeviceIoCtlFn, DeviceWriteFn, DeviceReadFn};
 
@@ -68,7 +68,7 @@ impl RamDisk {
                 {
                     let mut name = String::new();
                     let _ = core::fmt::write(&mut name, format_args!("ram{}\0", RAMDISKS.len() - 1));
-                    device_install(1, disk as *const RamDisk as *mut c_void, CStr::from_ptr(name.as_ptr() as *const c_char), 0, 0)
+                    device_install(1, disk as *const RamDisk as *mut c_void, CStr::from_ptr(name.as_ptr() as *const c_char), 0, 0, FileMode::IFBLK)
                 },
                 None => return 0
             }

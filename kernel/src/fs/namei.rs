@@ -1,10 +1,10 @@
-use core::{ffi::{c_char, c_void, CStr}, intrinsics::unlikely, iter::empty, ptr::{null_mut, addr_of_mut}};
+use core::{ffi::{c_char, c_void, CStr}, intrinsics::unlikely, iter::empty, ptr::{null_mut, addr_of_mut}, alloc::Layout};
 use core::intrinsics::ptr_offset_from_unsigned;
 use alloc::string::String;
 
-use crate::kernel::{sched::get_current_running_process, string::strsep};
+use crate::kernel::{sched::get_current_running_process, string::strsep, device::DevT};
 
-use super::{dcache::DEntryFlags, file::FSPermission, inode::Inode, mount::lookup_mnt, path::Path};
+use super::{dcache::DEntryFlags, file::{FSPermission, FS, FileMode}, inode::Inode, mount::lookup_mnt, path::Path};
 pub type Fd = usize;
 
 
@@ -59,14 +59,15 @@ pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> Path
         {
             return path;
         }
-        left = strsep(addr_of_mut!(*next), "\\/".as_ptr() as *const c_char);
+        left = strsep(addr_of_mut!(*next), "\\/\0".as_ptr() as *const c_char);
         if (*next).is_null()
         { 
+            *next = left;
             return path;
         }
         loop
         { 
-            let name = String::from(CStr::from_ptr(left as *const i8).to_str().unwrap());
+            let name = String::from(CStr::from_ptr(left.cast()).to_str().unwrap());
             if (*path.dentry).d_flags.contains(DEntryFlags::MOUNTED)
             {
                 let mount = lookup_mnt(path.dentry);
@@ -76,14 +77,14 @@ pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> Path
                  }
                 path.dentry = (*mount).mnt_root;
                 path.mnt = mount
-            } 
+            }
             path.dentry = (*path.dentry).look_up(&name);
             if path.dentry.is_null()
             {
                 return Path::empty();
             } 
             
-            left = strsep(addr_of_mut!(*next), "\\/".as_ptr().cast());
+            left = strsep(addr_of_mut!(*next), "\\/\0".as_ptr().cast());
             if (*next).is_null() 
             {
                 *next = left;
@@ -93,21 +94,36 @@ pub fn named(path_name : *const c_char, next : &mut *mut c_char) -> Path
     }
 }
 
-pub fn namei(path : *const c_char) -> Path
+pub fn namei(path_name : *const c_char) -> Path
 {
     unsafe
     {
+        let name_len = compiler_builtins::mem::strlen(path_name.cast());
+        let layout = Layout::from_size_align(name_len, 8).unwrap();
+        let tmp_name = alloc::alloc::alloc(layout) as *mut c_char;
+        compiler_builtins::mem::memcpy(tmp_name.cast(), path_name.cast(), name_len + 1);
         let mut next = null_mut();
-        let mut path = named(path, &mut next);
+        let mut path = named(tmp_name.cast(), &mut next);
         if path.dentry.is_null()
         {
+            alloc::alloc::dealloc(tmp_name.cast(), layout);
             return Path::empty();
         }
         if next.is_null()
         {
+            alloc::alloc::dealloc(tmp_name.cast(), layout);
             return path;
         }
         path.dentry = (*path.dentry).look_up(&String::from(CStr::from_ptr(next).to_str().unwrap()));
+        alloc::alloc::dealloc(tmp_name.cast(), layout);
         path
+    }
+}
+
+pub fn sys_mknod(filename : *const c_char, mode : FileMode, dev : DevT)
+{
+    unsafe
+    {
+        FS.mknodat(0, filename, mode, dev);
     }
 }
