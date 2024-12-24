@@ -8,7 +8,7 @@
 #![feature(alloc_layout_extra)]
 #![feature(allocator_api)]
 #![no_std]
-
+#![allow(warnings, unused)]
 extern crate alloc;
 
 pub mod kernel;

@@ -4,6 +4,8 @@ pub const __NR_READ : usize = 0;
 pub const __NR_WRITE : usize = 1;
 pub const __NR_SCHED_YIELD : usize = 24;
 pub const __NR_FORK : usize = 57;
+pub const __NR_SYS_EXECVE : usize = 59;
+pub const __NR_EXIT : usize = 60;
 
 pub unsafe fn __syscall0(nr : usize) -> usize
 {

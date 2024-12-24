@@ -1,4 +1,3 @@
-use core::sync::atomic;
 use alloc::collections::BTreeMap;
 use core::{ptr::null_mut, sync::atomic};
 use super::{process::{sys_yield, PCB}, sched::get_current_running_process};

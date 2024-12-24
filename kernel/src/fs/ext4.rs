@@ -3,7 +3,7 @@ use core::{alloc::Layout, cmp::min, ffi::{c_char, c_void}, mem::{offset_of, size
 use alloc::{alloc::{alloc, dealloc}, collections::BTreeMap, string::{String, ToString}, vec::Vec};
 use proc_macro::__init;
 
-use crate::{crypto::{crc16::crc16, crc32c::{crc32c_le, reverse32, reverse8}}, fs::file::{FSType, EOF, FS}, kernel::{bitmap::BitMap, buffer::{self, Buffer}, device::{device_ioctl, DevT, DEV_CMD_SECTOR_COUNT}, errno_base::EINVAL, io::SECTOR_SIZE, math::{self, log2, pow}, sched::get_current_running_process, string::{is_separator, memset, EOS}, time::sys_time, Err}, mm::memory::PAGE_SIZE};
+use crate::{crypto::{crc16::crc16, crc32c::{crc32c_le, reverse32, reverse8}}, fs::file::{FSType, EOF, FS}, kernel::{bitmap::BitMap, buffer::{self, Buffer}, device::{device_ioctl, DevT, DEV_CMD_SECTOR_COUNT}, errno_base::EINVAL, io::SECTOR_SIZE, math::{self, log2, pow}, sched::get_current_running_process, string::{memset, EOS}, time::sys_time, Err}, mm::memory::PAGE_SIZE};
 
 use super::{dcache::DEntry, dev::{new_decode_dev, old_decode_dev}, file::{disk_read, early_disk_read, DirEntry, FSPermission, FileMode, FileSystem, LogicalPart}, fs::FileSystemType, fs_context::{self, FsContext, FsContextOperations}, inode::Inode, namei::namei, super_block::get_tree_bdev};
 
@@ -97,6 +97,7 @@ pub static mut EXT4_CONTEXT_OPS : FsContextOperations = FsContextOperations
 {
     parse_param: None,
     get_tree: None,
+    parse_monolithic: None
 };
 
 pub fn ext4_init_fs_context(fs_context : *mut FsContext) -> Err
@@ -223,11 +224,11 @@ pub fn ext4_match_name(name : *const c_char, entry_name : *const c_char, next : 
         {
             return false;
         }
-        if *lhs != EOS && !is_separator(*lhs)
+        if *lhs != EOS && todo!()
         {
             return false;
         }
-        if is_separator(*lhs)
+        if todo!()
         {
             lhs = lhs.offset(1);
         }

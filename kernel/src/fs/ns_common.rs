@@ -1,9 +1,9 @@
 use super::dcache::DEntry;
-
+use core::sync::atomic::AtomicI64;
 
 
 pub struct NsCommon
 {
-    stashed : *mut DEntry,
-    
+    pub stashed : *mut DEntry,
+    pub count : AtomicI64
 }

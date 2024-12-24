@@ -1,9 +1,12 @@
+#![no_main]
 #![no_std]
-#![feature(start)]
 use core::{panic::PanicInfo, ffi::c_char};
 use lib::unistd::{self, write, fork};
 
-fn main()
+extern crate builtins;
+
+#[no_mangle]
+pub fn main()
 {
     let start_str = "init success\n";
     write(0, start_str.as_ptr() as *const i8, start_str.len());

@@ -1,7 +1,7 @@
 use core::{ptr::null_mut, ffi::{c_void, c_char}};
 use proc_macro::__init;
 
-use crate::{bochs_break, fs::file::sys_write, kernel::{fork::sys_fork, process::{self, sys_yield}, sched::get_current_running_process, syscall_defs::{__NR_FORK, __NR_SCHED_YIELD, __NR_WRITE, __NR_SYS_EXECVE, __NR_EXIT}}, logk};
+use crate::{bochs_break, fs::file::sys_write, kernel::{fork::sys_fork, process::{self, sys_yield, sys_exit}, sched::get_current_running_process, syscall_defs::{__NR_FORK, __NR_SCHED_YIELD, __NR_WRITE, __NR_SYS_EXECVE, __NR_EXIT}, execve::sys_execve}, logk};
 
 use super::{cpu, process::PtRegs, interrupt::HANDLER_TABLE};
 use core::arch::asm;
@@ -12,6 +12,7 @@ extern "C"
     fn _syscall_start();
 } 
 
+#[no_mangle]
 pub static mut SYSTEM_CALL_TABLE : [SyscallrFn; 256] = [unsafe { core::mem::transmute::<*mut(), SyscallrFn>(default_syscall as *mut()) }; 256];
 
 pub unsafe fn default_syscall()

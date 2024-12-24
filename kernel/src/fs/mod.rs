@@ -14,5 +14,6 @@ pub mod fs_context;
 pub mod path;
 pub mod ns_common;
 pub mod ida;
+pub mod pnode;
 
 pub const PART_FS_EXTENDED : u32 = 5;

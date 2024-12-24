@@ -30,24 +30,26 @@ pub unsafe fn memset(mut dst : *mut u8, value : u8, size : usize)
     }
 }
 
-#[inline]
-pub fn is_separator(c : c_char) -> bool
+pub unsafe fn strsep(stringp : *mut *mut c_char, delim : *const c_char) -> *mut c_char
 {
-    c == '\\' as i8 || c == '/' as i8
-}
-
-pub unsafe fn strsep(str : *const c_char) -> *mut c_char
-{
-    let mut ptr = str as *mut c_char;
-    let mut last = null_mut();
+    let mut ptr = *stringp;
+    let first = *stringp;
     loop {
-        if is_separator(*ptr)
+        let mut d_p = delim;
+        while *d_p != '\0' as c_char
         {
-            last = ptr
+            if *d_p == *ptr
+            {
+                *ptr = 0 as c_char;
+                *stringp = ptr.offset(1);
+                return first;
+            }
+            d_p = d_p.offset(1);
         }
         if *ptr == EOS
         {
-            return last;
+            *stringp == null_mut();
+            return first;
         }
         ptr = ptr.offset(1);
     }

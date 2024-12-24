@@ -101,11 +101,11 @@ pub fn init_filesystem()
 }
 
 impl FileSystem {
+    #[__init]
     fn init(&mut self)
     {
         self.iroot = DEntry::empty(null_mut());
     }
-
 
     // pub fn read_file_logic_block(&mut self, file_t : *mut FileStruct, block_idx : Idx) -> *mut Buffer
     // {
@@ -474,6 +474,7 @@ pub struct LogicalPart
     pub inode_count : usize,
     pub data_map : BTreeMap<Idx, *mut Buffer>,
     pub s_root : *mut DEntry,
+    pub s_mounts : ListHead,
     pub sb_mount : *mut Mount,
     pub s_flags : u32
 }
@@ -690,7 +691,7 @@ impl LogicalPart {
 
     pub fn new() -> Self
     {
-        Self { old_fs_type: FSType::None, logic_block_size: 0, logic_block_count: 0, inode_count: 0, s_dev: 0, data_map: BTreeMap::new(), s_d_op: null_mut(), s_root: null_mut(), sb_mount: null_mut(), s_sbi: null_mut(), fs_type: null_mut(), s_flags: 0 }
+        Self { old_fs_type: FSType::None, logic_block_size: 0, logic_block_count: 0, inode_count: 0, s_dev: 0, data_map: BTreeMap::new(), s_d_op: null_mut(), s_root: null_mut(), sb_mount: null_mut(), s_sbi: null_mut(), fs_type: null_mut(), s_flags: 0, s_mounts: ListHead::empty() }
     }
 
     pub fn read_block(&self, logic_block_no : usize) -> *mut Buffer

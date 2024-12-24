@@ -1,2 +1,4 @@
 #![no_std]
-use lib::panic;
+#![feature(linkage)]
+
+pub mod lang_items;

@@ -1,9 +1,9 @@
 use core::{alloc::Layout, ffi::{c_char, c_void, CStr}, ptr::{addr_of, addr_of_mut, null_mut}};
-
+use proc_macro::__init; 
 use alloc::{collections::{BTreeMap, BTreeSet, LinkedList}, string::String, sync::Arc};
 use bitflags::bitflags;
-use crate::{bit, container_of, kernel::{errno_base::{err_ptr, is_err, ptr_err, EBUSY, EFAULT, EINVAL, EISDIR, ENOMEM, ENOSPC, ENOTDIR, EPERM}, list::ListHead, Err}};
-
+use crate::{bit, container_of, kernel::{errno_base::{err_ptr, is_err, ptr_err, EBUSY, EFAULT, EINVAL, EISDIR, ENOMEM, ENOSPC, ENOTDIR, EPERM}, list::ListHead, Err}, fs::{pnode::set_mnt_shared, fs::{SB_RDONLY, SB_SYNCHRONOUS, SB_MANDLOCK, SB_DIRSYNC, SB_SILENT, SB_POSIXACL, SB_LAZYTIME, SB_I_VERSION, FileSystemType}}};
+use crate::mm::memory::PAGE_SIZE;
 use super::{dcache::{DEntry, DEntryFlags}, file::{LogicalPart, FS}, fs::{SB_I_NODEV, SB_I_NOEXEC, SB_I_USERNS_VISIBLE, SB_NOUSER}, fs_context::{vfs_parse_fs_string, FsContext}, ida::Ida, namei::namei, ns_common::NsCommon, path::Path, super_block::vfs_get_tree};
 
 static mut VFSMOUNT_HLIST : BTreeMap<*mut DEntry, *mut VFSMount> = BTreeMap::new();
@@ -15,6 +15,7 @@ static mut MNT_GROUP_IDA : Ida = Ida::new();
 const PATH_MAX : usize = 4096;
 
 bitflags! {
+    #[derive(Copy, Clone)]
     pub struct MntFlags : u32
     {
         const NOSUID = bit!(0);
@@ -48,6 +49,7 @@ bitflags! {
 }
 
 enum MntTreeFlag {
+    Empty = 0,
     MntTreeMove = bit!(0),
     MntTreeBeneath = bit!(1)
 }
@@ -59,7 +61,8 @@ struct MntNamespace
     ucounts : usize,
     nr_mounts : u32,
     pending_mounts : u32,
-    seq : u64
+    seq : u64,
+    rb_node : BTreeSet<*mut Mount>
 }
 
 impl MntNamespace
@@ -67,6 +70,41 @@ impl MntNamespace
     pub const fn is_anon_ns(&self) -> bool
     {
         self.seq == 0
+    }
+    pub fn new() -> *mut Self
+    {
+        unsafe
+        {
+            let ptr = alloc::alloc::alloc(Layout::new::<Self>()) as *mut Self;
+            (*ptr) = Self
+            {
+                ns: NsCommon
+                {
+                    stashed: null_mut()
+                }, 
+                root: null_mut(),
+                ucounts : 0,
+                nr_mounts : 0,
+                pending_mounts : 0,
+                seq : 0,
+                rb_node : BTreeSet::new()
+            };
+            ptr
+        }
+    }
+
+    pub fn add_mount(&mut self, mnt : *mut Mount)
+    {
+        unsafe
+        {
+            self.rb_node.insert(mnt);
+        }
+    }
+    
+    #[inline(always)]
+    pub fn get(&mut self)
+    {
+        self.ns.count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -144,24 +182,20 @@ pub fn sys_mount(dev_name : *const c_char, dir_name : *const c_char, fstype : *c
     }
 }
 
-pub fn path_mount(sb : *mut LogicalPart, dstination : Path, mnt_parent : *mut Mount, mnt_devname : Arc<String>) -> Err
+pub fn path_mount(dev_name : Arc<String>, path : Path, type_name : Arc<String>, flags : u32, data : *const c_void) -> Err
 {
     unsafe
     {
-        let mount = Mount::new(sb);
-        if mount.is_null()
+        let mnt_flags = MntFlags::empty();
+        let mut sb_flags = 0;
+        let mut ret = 0;
+        if !data.is_null()
         {
-            return -ENOMEM;
+            *(data.offset(PAGE_SIZE as isize - 1) as *mut i8) = 0;
         }
-        (*mount).mnt_mp = Mountpoint::new(dstination.dentry);
-        if (*mount).mnt_mp.is_null()
-        {
-            return -ENOMEM;
-        }
-        (*mount).mnt_parent = mnt_parent;
-        (*mount).mnt_devname = mnt_devname.clone();
+        sb_flags = flags & (SB_RDONLY | SB_SYNCHRONOUS | SB_MANDLOCK | SB_DIRSYNC | SB_SILENT | SB_POSIXACL | SB_LAZYTIME | SB_I_VERSION);
+        do_new_mount(path, type_name, sb_flags, mnt_flags, dev_name, data)
         // MOUNT_HLIST.insert(dstination, (*mount).mnt_mp);
-        0
     }
 }
 
@@ -173,7 +207,8 @@ pub fn do_mount(dev_name : Arc<String>, dir_name : Arc<String>, fstype : Arc<Str
         let dev_path = namei(dir_name.as_ptr() as *mut i8);
         let mnt_sb = (*dev_path.dentry).d_inode as *mut LogicalPart; // todo!()
         let mount = find_mount(mount_path.dentry);
-        path_mount(mnt_sb, mount_path, real_mount(mount_path.mnt), dev_name)
+        // path_mount(mnt_sb, mount_path, real_mount(mount_path.mnt), dev_name)
+        0
     }
 }
 
@@ -187,16 +222,23 @@ fn vfs_create_mount(fc : *mut FsContext) -> *mut VFSMount
             return err_ptr(-EINVAL);
         }
         mnt = Mount::new((*(*fc).root).d_sb);
-        (*mnt).mnt_devname = (*fc).source.clone();
+        if mnt.is_null()
+        {
+            return err_ptr(-ENOMEM);
+        }
+        (*mnt).mnt.mnt_sb = (*(*fc).root).d_sb;
         (*(*mnt).mnt_mp).m_dentry = (*(*fc).root).dget();
         (*mnt).mnt.mnt_root = (*fc).root;
         (*mnt).mnt_parent = mnt;
-        &mut (*mnt).mnt
+
+        (*mnt).mnt_instance.head_insert(&mut (*(*mnt).mnt.mnt_sb).s_mounts);
+
+        addr_of_mut!((*mnt).mnt)
     }
     
 }
 
-fn do_new_mount(path : Path, fstype : Arc<String>, sb_flags : u32, mnt_flags : u32, name : Arc<String>, data : *const c_void) -> Err
+fn do_new_mount(path : Path, fstype : Arc<String>, sb_flags : u32, mnt_flags : MntFlags, name : Arc<String>, data : *const c_void) -> Err
 {
     unsafe
     {
@@ -234,7 +276,7 @@ fn real_mount(vfsmount : *mut VFSMount) -> *mut Mount
     }
 }
 
-fn do_new_mount_fc(fc : *mut FsContext, mountpoint : Path, mut mnt_flags : u32) -> Err
+fn do_new_mount_fc(fc : *mut FsContext, mountpoint : Path, mut mnt_flags : MntFlags) -> Err
 {
     unsafe
     {
@@ -265,19 +307,19 @@ fn graft_tree(mnt : *mut Mount, p : *mut Mount, mp : *mut Mountpoint) -> Err
         {
             return -ENOTDIR;
         }
-        0
+        attach_recursive_mnt(mnt, p, mp, MntTreeFlag::Empty)
     }
 }
 
-fn attach_recursive_mnt(source_mnt : *mut Mount, top_mnt : *mut Mount, dest_mp : *mut Mountpoint, flags : MntTreeFlag) -> Err
+fn attach_recursive_mnt(source_mnt : *mut Mount, top_mnt : *mut Mount, mut dest_mp : *mut Mountpoint, flags : MntTreeFlag) -> Err
 {
     unsafe
     {
         let moving;
         let beneath;
         let ns = (*top_mnt).mnt_ns;
-        let mut err;
-        let dest_mnt;
+        let mut err = 0;
+        let mut dest_mnt;
         match flags {
             MntTreeFlag::MntTreeMove => 
             {
@@ -289,6 +331,11 @@ fn attach_recursive_mnt(source_mnt : *mut Mount, top_mnt : *mut Mount, dest_mp :
                 moving = false;
                 beneath = true;
             },
+            _ => 
+            {
+                moving = false;
+                beneath = false;
+            }
         }
         let smp = get_mountpoint((*source_mnt).mnt.mnt_root);
         if is_err(smp)
@@ -320,6 +367,43 @@ fn attach_recursive_mnt(source_mnt : *mut Mount, top_mnt : *mut Mount, dest_mp :
                 return err;
             }
             err = propagate_mnt(dest_mnt, dest_mp, source_mnt, &BTreeSet::<*mut Mount>::new());
+        }
+        if err != 0
+        {
+            todo!("clean mnt ids");
+        }
+        if is_mnt_shared(dest_mnt)
+        {
+            let mut p = source_mnt;
+            while !p.is_null()
+            {
+                set_mnt_shared(&mut *p);
+                p = (*p).next_mnt(source_mnt);
+            }
+        }
+        if moving
+        {
+            if beneath
+            {
+                dest_mp = smp;
+            }
+            todo!();
+        }
+        else
+        {
+            if !(*source_mnt).mnt_ns.is_null()
+            {
+                todo!();
+            }
+            if beneath
+            {
+                todo!();
+            }
+            else
+            {
+                todo!();
+            }
+            commit_tree(source_mnt);
         }
         0
     }
@@ -367,12 +451,10 @@ fn propagate_mnt(dest_mnt : *mut Mount, dest_mp : *mut Mountpoint, source_mnt : 
             m = (**n).mnt_parent;
             if (*m).mnt_master != (*dest_mnt).mnt_master
             {
-                (*(*m).mnt_master).mnt.mnt_flags &= !0x4000000;
+                (*(*m).mnt_master).mnt.mnt_flags = (*(*m).mnt_master).mnt.mnt_flags.difference(MntFlags::MARKED); 
             }
         }
     }
-
-
     0
 }
 
@@ -492,7 +574,7 @@ fn is_mnt_shared(dest_mnt : *mut Mount) -> bool
 {
     unsafe
     {
-        (*dest_mnt).mnt_flags.contains(MntFlags::SHARED)
+        (*dest_mnt).mnt.mnt_flags.contains(MntFlags::SHARED)
     }
 }
 
@@ -529,11 +611,11 @@ fn count_mounts(ns : *mut MntNamespace, mnt : *mut Mount) -> Err
 fn path_mounted(path : &Path) -> bool
 {
     unsafe {
-        (*path.mnt).mnt_root == path.dentry        
+        (*path.mnt).mnt_root == path.dentry
     }
 }
 
-fn do_add_mount(newmount : *mut Mount, mp : *mut Mountpoint, path : Path, mnt_flags : u32) -> Err
+fn do_add_mount(newmount : *mut Mount, mp : *mut Mountpoint, path : Path, mnt_flags : MntFlags ) -> Err
 {
     unsafe
     {
@@ -551,7 +633,7 @@ fn do_add_mount(newmount : *mut Mount, mp : *mut Mountpoint, path : Path, mnt_fl
     }
 }
 
-fn mount_too_revealing(sb : *mut LogicalPart, new_mount_flags : &mut u32) -> bool
+fn mount_too_revealing(sb : *mut LogicalPart, new_mount_flags : &mut MntFlags) -> bool
 {
     unsafe
     {
@@ -614,9 +696,9 @@ pub struct Mount
     pub mnt_share : ListHead,
     pub mnt_slave_list : ListHead,
     pub mnt_child : ListHead,
+    pub mnt_instance : ListHead,
     pub mnt_slave : ListHead,
     pub mnt_ns : *mut MntNamespace,
-    pub mnt_flags : MntFlags,
     pub mnt_id : i32,
     pub mnt_group_id : i32,
     pub mnt_master : *mut Mount
@@ -626,7 +708,7 @@ pub struct VFSMount
 {
     pub mnt_sb : *mut LogicalPart,
     pub mnt_root : *mut DEntry,
-    pub mnt_flags : u32
+    pub mnt_flags : MntFlags
 }
 
 impl Mountpoint
@@ -653,7 +735,7 @@ impl Mount {
         unsafe
         {
             let ptr = alloc::alloc::alloc(Layout::new::<Self>()) as *mut Self;
-            (*ptr) = Self { mnt_parent: null_mut(), mnt_mp: null_mut(), mnt_devname: Arc::new(String::new()), mnt: VFSMount { mnt_sb, mnt_root: null_mut(), mnt_flags: 0 }, nmt_devname: Arc::new(String::from("none")), mnt_mounts: ListHead::empty(), mnt_ns: null_mut(), mnt_flags: MntFlags::empty(), mnt_id: 0, mnt_group_id: 0, mnt_master: null_mut(), mnt_share: ListHead::empty(), mnt_slave_list: ListHead::empty(), mnt_slave: ListHead::empty(), mnt_child: ListHead::empty() };
+            (*ptr) = Self { mnt_parent: null_mut(), mnt_mp: null_mut(), mnt_devname: Arc::new(String::new()), mnt: VFSMount { mnt_sb, mnt_root: null_mut(), mnt_flags: MntFlags::empty() }, nmt_devname: Arc::new(String::from("none")), mnt_mounts: ListHead::empty(), mnt_ns: null_mut(), mnt_id: 0, mnt_group_id: 0, mnt_master: null_mut(), mnt_share: ListHead::empty(), mnt_slave_list: ListHead::empty(), mnt_slave: ListHead::empty(), mnt_child: ListHead::empty(), mnt_instance: ListHead::empty() };
             ptr
         }
     }
@@ -686,5 +768,70 @@ impl Mount {
             container_of!(next, Mount, mnt_child)
         }
 
+    }
+}
+
+pub fn vfs_kern_mount(_type : *mut FileSystemType, flags : u32, name : Arc<String>, data : *mut c_void) -> *mut VFSMount
+{
+    unsafe
+    {
+        let fc = FsContext::context_for_mount(_type, flags);
+        let mut ret = 0;
+        let mnt;
+        if _type.is_null()
+        {
+            return err_ptr(-EINVAL);
+        } 
+        if (*name).len() != 0
+        {
+            ret = vfs_parse_fs_string(fc, "source", &name);
+        } 
+        if ret == 0
+        {
+            todo!()
+        } 
+        if ret == 0
+        { 
+            mnt = fc_mount(fc);
+        } 
+        else
+        {
+            mnt = err_ptr(ret);
+        }
+        FsContext::puts_context(fc);
+        mnt
+    }
+}
+
+pub fn fc_mount(fc : *mut FsContext) -> *mut VFSMount
+{
+    let err = vfs_get_tree(fc);
+    if err == 0
+    {
+        return vfs_create_mount(fc);
+    }
+    err_ptr(err)
+}
+
+#[__init]
+pub fn init_mount_tree()
+{
+    unsafe
+    {
+        let mnt = vfs_kern_mount(addr_of!(ROOTFS_FS_TYPE), 0, Arc::new(String::from("rootfs")), null_mut());
+        if is_err(mnt)
+        {
+            panic!("Can't create rootfs");
+        }
+        let ns = MntNamespace::new();
+        if is_err(ns)
+        {
+            panic!("Can't allocate initial namespace");
+        }
+        let m = real_mount(mnt);
+        (*ns).root = m;
+        (*ns).nr_mounts = 1;
+        (*ns).add_mount(m);
+        
     }
 }

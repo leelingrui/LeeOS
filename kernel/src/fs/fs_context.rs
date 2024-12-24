@@ -1,8 +1,8 @@
-use core::{alloc::Layout, ffi::c_void, iter::empty, ptr::null_mut};
+use core::{alloc::Layout, ffi::{c_void, c_char}, iter::empty, ptr::null_mut};
 
 use alloc::{rc::Rc, string::String, sync::Arc};
 
-use crate::kernel::{errno_base::{err_ptr, ptr_err, EINVAL, ENOMEM, ENOPARAM}, semaphore::Semaphore, Err};
+use crate::kernel::{errno_base::{err_ptr, ptr_err, EINVAL, ENOMEM, ENOPARAM}, semaphore::Semaphore, Err, string::strsep};
 
 use super::{dcache::DEntry, file::File, fs::{FileSystemType, SB_DIRSYNC, SB_LAZYTIME, SB_MANDLOCK, SB_RDONLY, SB_SYNCHRONOUS}};
 
@@ -194,11 +194,13 @@ pub fn vfs_parse_fs_string(fc : *mut FsContext, key : &str, value : &Arc<String>
 
 pub type FsContextParseParamFn = fn(&FsContext, &FsParameter) -> Err;
 pub type FsContextGetTreeFn = fn(&FsContext) -> Err;
+pub type FsContextParseMonolithicFn = fn(&FsContext, *mut c_void) -> Err;
 
 pub struct FsContextOperations
 {
     pub parse_param : Option<FsContextParseParamFn>,
-    pub get_tree : Option<FsContextGetTreeFn>
+    pub get_tree : Option<FsContextGetTreeFn>,
+    pub parse_monolithic : Option<FsContextParseMonolithicFn>
 }
 
 pub struct FsContext
@@ -276,3 +278,39 @@ impl FsContext
         Self::alloc_context(fs_type, null_mut(), sb_flags, 0, FsContextPurpose::FsContextForMount)
     }
 }
+
+pub fn parse_monolithic_mount_data(fc : *mut FsContext, data : *mut c_void) -> Err
+{
+    unsafe
+    {
+        let monolithic_mount_data = match (*(*fc).ops).parse_monolithic
+        {
+            Some(func) => func,
+            None => generic_parse_monolithic,
+        };
+        monolithic_mount_data(&*fc, data)
+    }
+}
+
+fn generic_parse_monolithic(fc : &FsContext, data : *mut c_void) -> Err
+{
+    vfs_parse_monolithic_sep(fc, data, vfs_parse_comma_sep)
+}
+
+fn vfs_parse_monolithic_sep(fc : &FsContext, data : *mut c_void, sep : fn(*mut *mut c_char) -> *mut c_char) -> Err
+{
+    let options = data;
+    if options.is_null()
+    {
+        return 0;
+    }
+    todo!();
+}
+
+fn vfs_parse_comma_sep(s : *mut *mut c_char) -> *mut c_char
+{
+    unsafe
+    {
+        strsep(s, ",".as_ptr() as *mut c_char)
+    }
+    }
