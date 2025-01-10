@@ -2,8 +2,11 @@
 target = "../x86_64-unknown-leeos.json"
 target-dir = "../build"
 
+rustflags = [
+    "-C", "relocation-model=static", "-C", "target-feature=+crt-static"
+]
+
+
 [unstable]
 build-std = ["core"]
 build-std-features = ["compiler-builtins-mem"]
-
-

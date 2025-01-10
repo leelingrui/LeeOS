@@ -38,6 +38,40 @@ pub const EDOM : Err = 33;	/* Math argument out of domain of func */
 pub const ERANGE : Err = 34;	/* Math result not representable */
 
 
+pub const EDEADLK : Err = 35;	/* Resource deadlock would occur */
+pub const ENAMETOOLONG : Err = 36;	/* File name too long */
+pub const ENOLCK : Err = 37;	/* No record locks available */
+
+/*
+ * This error code is special: arch syscall entry code will return
+ * -ENOSYS if users try to call a syscall that doesn't exist.  To keep
+ * failures of syscalls that really do exist distinguishable from
+ * failures due to attempts to use a nonexistent syscall, syscall
+ * implementations should refrain from returning -ENOSYS.
+ */
+pub const ENOSYS : Err = 38;	/* Invalid system call number */
+
+pub const ENOTEMPTY : Err = 39;	/* Directory not empty */
+pub const ELOOP : Err = 40;/* Too many symbolic links encountered */
+pub const EWOULDBLOCK : Err = EAGAIN;	/* Operation would block */
+pub const ENOMSG : Err = 42;	/* No message of desired type */
+pub const EIDRM : Err = 43;	/* Identifier removed */
+pub const ECHRNG : Err = 44;	/* Channel number out of range */
+pub const EL2NSYNC : Err = 45;	/* Level 2 not synchronized */
+pub const EL3HLT : Err = 46;	/* Level 3 halted */
+pub const EL3RST : Err = 47;	/* Level 3 reset */
+pub const ELNRNG : Err = 48;	/* Link number out of range */
+pub const EUNATCH : Err = 49;	/* Protocol driver not attached */
+pub const ENOCSI : Err = 50;	/* No CSI structure available */
+pub const EL2HLT : Err = 51;	/* Level 2 halted */
+pub const EBADE : Err = 52;	/* Invalid exchange */
+pub const EBADR : Err = 53;	/* Invalid request descriptor */
+pub const EXFULL : Err = 54;	/* Exchange full */
+pub const ENOANO : Err = 55;	/* No anode */
+pub const EBADRQC : Err = 56;	/* Invalid request code */
+pub const EBADSLT : Err = 57;	/* Invalid slot */
+
+
 pub const ERESTARTSYS : Err = 512;
 pub const ERESTARTNOINTR : Err = 513;
 pub const ERESTARTNOHAND : Err = 514;	/* restart if no handler.. */
@@ -66,13 +100,13 @@ const MAX_ERRNO : Err = 4095;
 
 
 #[inline(always)]
-pub fn is_err<T>(x : *mut T) -> bool
+pub fn is_err<T>(x : *const T) -> bool
 {
-    unlikely((x as Err) >= -MAX_ERRNO)
+    unsafe { unlikely((x as Err) >= -MAX_ERRNO) }
 }
 
 #[inline(always)]
-pub fn ptr_err<T>(ptr : *mut T) -> Err
+pub fn ptr_err<T>(ptr : *const T) -> Err
 {
     ptr as Err
 }
@@ -81,4 +115,10 @@ pub fn ptr_err<T>(ptr : *mut T) -> Err
 pub fn err_ptr<T>(err : Err) -> *mut T
 {
     err as *mut T
+}
+
+#[inline(always)]
+pub fn is_err_or_null<T>(ptr : *const T) -> bool
+{
+    unsafe { unlikely(ptr.is_null()) || is_err(ptr) }
 }

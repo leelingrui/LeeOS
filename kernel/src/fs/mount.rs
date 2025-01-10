@@ -1,13 +1,13 @@
-use core::{alloc::Layout, ffi::{c_char, c_void, CStr}, ptr::{addr_of, addr_of_mut, null_mut}, sync::atomic::AtomicI64, intrinsics::{likely, unlikely}};
+use core::{alloc::Layout, ffi::{c_char, c_void, CStr}, intrinsics::{likely, unlikely}, ptr::{addr_of, addr_of_mut, null_mut}, sync::atomic::AtomicI64};
 use proc_macro::__init; 
 use alloc::{collections::{BTreeMap, BTreeSet, LinkedList}, string::String, sync::Arc};
 use bitflags::bitflags;
-use crate::{bit, container_of, kernel::{sched::get_current_running_process, semaphore::Semaphore, errno_base::{EEXIST, err_ptr, is_err, ptr_err, EBUSY, EFAULT, EINVAL, EISDIR, ENOMEM, ENOSPC, ENOTDIR, EPERM}, list::ListHead, Err}, fs::{pnode::set_mnt_shared, fs::{SB_RDONLY, SB_SYNCHRONOUS, SB_MANDLOCK, SB_DIRSYNC, SB_SILENT, SB_POSIXACL, SB_LAZYTIME, SB_I_VERSION, FileSystemType}}};
+use crate::{bit, container_of, fs::{fs::{FileSystemType, SB_DIRSYNC, SB_I_VERSION, SB_LAZYTIME, SB_MANDLOCK, SB_POSIXACL, SB_RDONLY, SB_SILENT, SB_SYNCHRONOUS}, pnode::set_mnt_shared}, kernel::{errno_base::{err_ptr, is_err, is_err_or_null, ptr_err, EBUSY, EEXIST, EFAULT, EINVAL, EISDIR, ELOOP, ENOMEM, ENOSPC, ENOTDIR, EPERM}, list::ListHead, sched::get_current_running_process, semaphore::Semaphore, Err}};
 use crate::mm::memory::PAGE_SIZE;
-use super::{dcache::{DEntry, DEntryFlags}, file::{LogicalPart, FS, ROOTFS_FS_TYPE}, fs::{SB_I_NODEV, SB_I_NOEXEC, SB_I_USERNS_VISIBLE, SB_NOUSER}, fs_context::{vfs_parse_fs_string, FsContext, parse_monolithic_mount_data}, ida::Ida, namei::namei, ns_common::NsCommon, path::Path, super_block::vfs_get_tree};
+use super::{dcache::{DEntry, DEntryFlags}, file::{FileMode, LogicalPart, FS, ROOTFS_FS_TYPE}, fs::{SB_I_NODEV, SB_I_NOEXEC, SB_I_USERNS_VISIBLE, SB_NOUSER}, fs_context::{parse_monolithic_mount_data, vfs_parse_fs_string, FsContext}, ida::Ida, namei::namei, ns_common::NsCommon, path::Path, super_block::vfs_get_tree};
 
-static mut VFSMOUNT_HLIST : BTreeMap<*mut DEntry, *mut VFSMount> = BTreeMap::new();
-static mut MOUNT_HLIST : BTreeMap<*mut DEntry, *mut Mountpoint> = BTreeMap::new();
+static mut M_HASH : BTreeMap<(*mut VFSMount, *mut DEntry), *mut Mount> = BTreeMap::new();
+static mut MP_HASH : BTreeMap<*mut DEntry, *mut Mountpoint> = BTreeMap::new();
 static mut SYSCTL_MOUNT_MAX : u32 = u32::MAX;
 static mut MNT_ID_IDA : Ida = Ida::new();
 static mut MNT_GROUP_IDA : Ida = Ida::new();
@@ -109,11 +109,14 @@ pub const MOVE_MOUNT_T_EMPTY_PATH : u32 = 0x00000040; /* Empty to path permitted
 pub const MOVE_MOUNT_SET_GROUP : u32 = 0x00000100; /* Set sharing group instead */
 pub const MOVE_MOUNT_BENEATH : u32 = 0x00000200; /* Mount beneath top mount */
 pub const MOVE_MOUNT_MASK : u32 = 0x00000377;
-
-enum MntTreeFlag {
-    Empty = 0,
-    MntTreeMove = bit!(0),
-    MntTreeBeneath = bit!(1)
+bitflags::bitflags!
+{
+    struct MntTreeFlag : u8
+    {
+        const Empty = 0;
+        const MntTreeMove = bit!(0);
+        const MntTreeBeneath = bit!(1);
+    }
 }
 
 struct MntNamespace
@@ -171,35 +174,51 @@ impl MntNamespace
     }
 }
 
-pub fn lookup_mnt(dentry : *mut DEntry) -> *mut VFSMount
+// pub fn find_mount(vfsmount : *mut VFSMount, dentry : *mut DEntry) -> *mut Mount
+// {
+//     unsafe
+//     {
+//         match MOUNT_HLIST_V_D.get(&(vfsmount, dentry)) {
+//             Some(mnt) => *mnt,
+//             None => null_mut(),
+//         }
+//     }
+// }
+
+pub fn __lookup_mnt(vfsmount : *mut VFSMount, dentry : *mut DEntry) -> *mut Mount
 {
-    unsafe
+    unsafe 
     {
-        match VFSMOUNT_HLIST.get(&dentry) {
+        match M_HASH.get(&(vfsmount, dentry)) {
             Some(mnt) => *mnt,
             None => null_mut(),
         }
     }
 }
 
-pub fn find_mount(dentry : *mut DEntry) -> *mut Mountpoint
+// todo!()
+pub fn lookup_mnt(mut path : &Path) -> *mut VFSMount
 {
-    unsafe
+    unsafe 
     {
-        match MOUNT_HLIST.get(&dentry) {
-            Some(mnt) => *mnt,
-            None => null_mut(),
-        }
+        let child_mnt = __lookup_mnt(path.mnt, path.dentry);
+        if !child_mnt.is_null() { addr_of_mut!((*child_mnt).mnt) } else { null_mut() }
     }
+}
+
+pub fn lookup_mountpoint(dentry : *mut DEntry) -> *mut Mountpoint
+{
+
+    null_mut()
 }
 
 pub fn sys_mount(dev_name : *const c_char, dir_name : *const c_char, fstype : *const c_char, flags : u32, data : *const c_void) -> Err
 {
     unsafe
     {
-        let name_len = compiler_builtins::mem::strlen(dev_name);
+        let name_len = compiler_builtins::mem::strlen(dev_name) + 1;
         let sdev_name = Arc::new(String::from_raw_parts(dev_name.cast_mut().cast(), name_len, PAGE_SIZE).clone());
-        let dir_len = compiler_builtins::mem::strlen(dir_name);
+        let dir_len = compiler_builtins::mem::strlen(dir_name) + 1;
         let sdir_name = Arc::new(String::from_raw_parts(dir_name.cast_mut().cast(), dir_len, PAGE_SIZE).clone());
         let stype_name = if fstype.is_null()
         { 
@@ -207,7 +226,7 @@ pub fn sys_mount(dev_name : *const c_char, dir_name : *const c_char, fstype : *c
         }
         else
         {
-            let fstype_len = compiler_builtins::mem::strlen(fstype);
+            let fstype_len = compiler_builtins::mem::strlen(fstype) + 1;
             Arc::new(String::from_raw_parts(fstype.cast_mut().cast(), fstype_len, PAGE_SIZE).clone())
         };
         do_mount(sdev_name, sdir_name, stype_name, flags, data)
@@ -239,7 +258,7 @@ pub fn do_mount(dev_name : Arc<String>, dir_name : Arc<String>, fstype : Arc<Str
 {
     unsafe
     {
-        let mount_path = namei(dev_name.as_ptr() as *mut i8);
+        let mount_path = namei(dir_name.as_ptr() as *mut i8);
         path_mount(dev_name, mount_path, fstype, flags, data_page)
     }
 }
@@ -259,7 +278,7 @@ fn vfs_create_mount(fc : *mut FsContext) -> *mut VFSMount
             return err_ptr(-ENOMEM);
         }
         (*mnt).mnt.mnt_sb = (*(*fc).root).d_sb;
-        (*(*mnt).mnt_mp).m_dentry = (*(*fc).root).dget();
+        (*mnt).mnt_mountpoint = (*(*fc).root).dget();
         (*mnt).mnt.mnt_root = (*fc).root;
         (*mnt).mnt_parent = mnt;
 
@@ -300,7 +319,7 @@ fn do_new_mount(path : Path, fstype : Arc<String>, sb_flags : u32, mnt_flags : M
     }
 }
 
-fn real_mount(vfsmount : *mut VFSMount) -> *mut Mount
+pub fn real_mount(vfsmount : *mut VFSMount) -> *mut Mount
 {
     unsafe
     {
@@ -347,28 +366,11 @@ fn attach_recursive_mnt(source_mnt : *mut Mount, top_mnt : *mut Mount, mut dest_
 {
     unsafe
     {
-        let moving;
-        let beneath;
+        let moving = flags.contains(MntTreeFlag::MntTreeMove);
+        let beneath = flags.contains(MntTreeFlag::MntTreeBeneath);
         let ns = (*top_mnt).mnt_ns;
         let mut err = 0;
         let mut dest_mnt;
-        match flags {
-            MntTreeFlag::MntTreeMove => 
-            {
-                moving = true;
-                beneath = false;
-            },
-            MntTreeFlag::MntTreeBeneath => 
-            {
-                moving = false;
-                beneath = true;
-            },
-            _ => 
-            {
-                moving = false;
-                beneath = false;
-            }
-        }
         let smp = get_mountpoint((*source_mnt).mnt.mnt_root);
         if is_err(smp)
         {
@@ -419,13 +421,19 @@ fn attach_recursive_mnt(source_mnt : *mut Mount, top_mnt : *mut Mount, mut dest_
             {
                 dest_mp = smp;
             }
-            todo!();
+            unhash_mnt(source_mnt);
+            attach_mnt(source_mnt, top_mnt, dest_mp, beneath);
+            // touch_mnt_namespace
         }
         else
         {
             if !(*source_mnt).mnt_ns.is_null()
             {
-                todo!();
+                let mut p = source_mnt;
+                while !p.is_null() {
+                    // move_from_ns(p, )
+                    p = (*p).next_mnt(source_mnt);
+                }
             }
             if beneath
             {
@@ -447,6 +455,7 @@ fn mnt_set_mountpoint(mnt : *mut Mount, mp : *mut Mountpoint, child_mnt : *mut M
     {
         (*mp).m_count += 1;
         (*mnt).mnt_count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        (*child_mnt).mnt_mountpoint = (*mp).m_dentry;
         (*child_mnt).mnt_mp = mp;
         (*child_mnt).mnt_parent = mnt;
     }
@@ -700,7 +709,10 @@ fn commit_tree(mnt : *mut Mount)
     {
         let parent = (*mnt).mnt_parent;
         let n = (*parent).mnt_ns;
-        // (*mnt).mnt_list
+        // add to list
+        (*n).nr_mounts + (*n).pending_mounts;
+        (*n).pending_mounts = 0;
+        __attach_mnt(mnt, parent);
     }
 
 }
@@ -710,16 +722,42 @@ fn get_mountpoint(dentry : *mut DEntry) -> *mut Mountpoint
 {
     unsafe
     {
-        let mp =  find_mount(dentry);
-        let new;
-        if !mp.is_null()
-        {
-            (*mp).m_count += 1;
-            return mp;
+        let mut new = null_mut::<Mountpoint>();
+        let mut ret;
+        let mut mp;
+        loop {
+            if (*dentry).mountpoint()
+            {
+                mp =  lookup_mountpoint(dentry);
+                if !mp.is_null()
+                {
+                    return mp;
+                }
+            }
+
+            // new = Mountpoint::new(dentry);
+            // MP_HASH.insert(dentry, new);
+            if new.is_null()
+            {
+                new = alloc::alloc::alloc(Layout::new::<Mountpoint>()) as *mut Mountpoint;
+            }
+            if new.is_null()
+            {
+                return err_ptr(-ENOMEM);
+            }
+            ret = (*dentry).set_mounted();
+            if ret != -EBUSY
+            {
+                break;
+            }
         }
-        new = Mountpoint::new(dentry);
-        MOUNT_HLIST.insert(dentry, new);
-        new
+        (*new).m_dentry = (*dentry).dget();
+        (*new).m_count = 1;
+        MP_HASH.insert(dentry, new);
+        mp = new;
+        new = null_mut();
+        alloc::alloc::dealloc(new.cast(), Layout::new::<Mountpoint>());
+        mp
     }
 
 }
@@ -733,6 +771,7 @@ pub struct Mountpoint
 pub struct Mount
 {
     pub mnt_parent : *mut Mount,
+    pub mnt_mountpoint : *mut DEntry,
     pub mnt_mp : *mut Mountpoint,
     pub mnt_devname : Arc<String>,
     pub mnt : VFSMount,
@@ -816,7 +855,14 @@ impl Mount {
         unsafe
         {
             let ptr = alloc::alloc::alloc(Layout::new::<Self>()) as *mut Self;
-            ptr.write(Self { mnt_parent: null_mut(), mnt_mp: null_mut(), mnt_devname: Arc::new(String::new()), mnt: VFSMount { mnt_sb, mnt_root: null_mut(), mnt_flags: MntFlags::empty() }, nmt_devname: Arc::new(String::from("none")), mnt_mounts: ListHead::empty(), mnt_ns: null_mut(), mnt_id: 0, mnt_group_id: 0, mnt_master: null_mut(), mnt_share: ListHead::empty(), mnt_slave_list: ListHead::empty(), mnt_slave: ListHead::empty(), mnt_child: ListHead::empty(), mnt_instance: ListHead::empty(), mnt_count: AtomicI64::new(0) });
+            ptr.write(Self { mnt_parent: null_mut(), mnt_mp: null_mut(), mnt_devname: Arc::new(String::new()), mnt: VFSMount { mnt_sb, mnt_root: null_mut(), mnt_flags: MntFlags::empty() }, nmt_devname: Arc::new(String::from("none")), mnt_mounts: ListHead::empty(), mnt_ns: null_mut(), mnt_id: 0, mnt_group_id: 0, mnt_master: null_mut(), mnt_share: ListHead::empty(), mnt_slave_list: ListHead::empty(), mnt_slave: ListHead::empty(), mnt_child: ListHead::empty(), mnt_instance: ListHead::empty(), mnt_count: AtomicI64::new(0), mnt_mountpoint: null_mut() });
+            (*ptr).mnt_ns = MntNamespace::new();
+            (*ptr).mnt_share.init();
+            (*ptr).mnt_mounts.init();
+            (*ptr).mnt_slave_list.init();
+            (*ptr).mnt_slave.init();
+            (*ptr).mnt_child.init();
+            (*ptr).mnt_instance.init();
             ptr
         }
     }
@@ -965,6 +1011,7 @@ pub fn do_mount_root(name : *const c_char, fs : *const c_char, flags : u32, data
 {
     unsafe
     {
+        FS.mkdir("/root\0".as_ptr().cast(), FileMode::IFDIR);
         let mut data_page = null_mut();
         if !data.is_null()
         {
@@ -1012,7 +1059,7 @@ fn init_mount(dev_name : *const c_char, dir_name : *const c_char, type_page : *c
 fn do_move_mount_old(path : Path, old_name : Arc<String>) -> Err
 {
     let old_path = namei(old_name.as_ptr().cast());
-    if path.dentry.is_null()
+    if old_path.dentry.is_null()
     {
         return -EEXIST;
     }
@@ -1023,9 +1070,86 @@ fn do_move_mount(old_path : Path, new_path : Path, beneath : bool) -> Err
 {
     unsafe
     {
-        let old = real_mount(new_path.mnt);
+        let mut old = real_mount(old_path.mnt);
         let parent = (*old).mnt_parent;
         let mp = do_lock_mount(old_path, beneath);
+        let mut flags = MntTreeFlag::Empty;
+        if is_err(mp) { return ptr_err(mp); }
+        let mut p = real_mount(new_path.mnt);
+        let attached = mnt_has_parent(old);
+        if attached
+        {
+            flags.insert(MntTreeFlag::MntTreeMove);
+        }
+        let old_mp = (*old).mnt_mp;
+        // let ns = (*old_mp).mnt_ns
+        let mut err = -EINVAL;
+        // if !check_mnt(p)
+        // {
+
+        // }
+        if !is_mounted(addr_of!((*old).mnt))
+        {
+            panic!()
+        }
+
+        // if if attached { true } else is_anon_ns
+        if (*old).mnt.mnt_flags.contains(MntFlags::LOCKED)
+        {
+            panic!()
+        }
+
+        if !path_mounted(&old_path)
+        {
+            panic!()
+        }
+
+        if (*new_path.dentry).is_dir() != (*old_path.dentry).is_dir()
+        {
+            panic!()
+        }
+
+        if attached && is_mnt_shared(parent)
+        {
+            panic!()
+        }
+
+        if beneath
+        {
+            err = can_move_mount_beneath(old_path, new_path, mp);
+            if (err != 0)
+            {
+                panic!();
+            }
+
+            err = -EINVAL;
+            p = (*p).mnt_parent;
+            flags |= MntTreeFlag::MntTreeBeneath;
+        }
+
+        if is_mnt_shared(p) && tree_contains_unbindable(old)
+        {
+            panic!()
+        }
+
+        err = -ELOOP;
+
+        // check for nsfs_mounts
+
+        while mnt_has_parent(p) {
+            if (p == old)
+            {
+                panic!()
+            }
+            p = (*p).mnt_parent
+        }
+
+        err = attach_recursive_mnt(old, real_mount(new_path.mnt), mp, flags);
+        if err != 0
+        {
+            panic!()
+        }
+        // list_del mnt_expire
         0
     } 
 }
@@ -1035,7 +1159,7 @@ fn do_lock_mount(mut path : Path, beneath : bool) -> *mut Mountpoint
     unsafe
     {
         let mut mnt = path.mnt;
-        let mp = err_ptr(-ENOMEM);
+        let mut mp = err_ptr(-ENOMEM);
         let mut dentry = null_mut();
         loop
         {
@@ -1061,7 +1185,7 @@ fn do_lock_mount(mut path : Path, beneath : bool) -> *mut Mountpoint
                 // inode_unlock
                 return mp;
             }
-            mnt = lookup_mnt(path.dentry);
+            mnt = lookup_mnt(&path);
             if likely(mnt.is_null())
             {
                 break;
@@ -1075,6 +1199,181 @@ fn do_lock_mount(mut path : Path, beneath : bool) -> *mut Mountpoint
             path.mnt = mnt;
             path.dentry = (*(*mnt).mnt_root).dget();
         }
-        null_mut()
+
+        mp = get_mountpoint(dentry);
+        if is_err(mp)
+        {
+            // namespace_unlock
+            // inode_unlock
+        }
+
+        if beneath
+        {
+            (*dentry).dput();
+        }
+        mp
+    }
+}
+
+#[inline(always)]
+pub fn mnt_has_parent(mnt : *const Mount) -> bool
+{
+    unsafe 
+    {
+        mnt != (*mnt).mnt_parent
+    }
+}
+
+#[inline(always)]
+pub fn is_mounted(mnt : *const VFSMount) -> bool
+{
+    unsafe 
+    {
+        !is_err_or_null(mnt)
+    }
+}
+
+fn tree_contains_unbindable(mnt : *mut Mount) -> bool
+{
+    unsafe 
+    {
+        let mut p = mnt;
+        while !p.is_null() {
+            if (*p).mnt.mnt_flags.contains(MntFlags::UNBINDABLE)
+            {
+                return true;
+            }
+            p = (*p).next_mnt(mnt);
+        }
+        false
+    }
+
+}
+
+fn can_move_mount_beneath(from : Path, to : Path, mp : *mut Mountpoint) -> Err
+{
+    unsafe 
+    {
+        let mnt_from = real_mount(from.mnt);
+        let mnt_to = real_mount(to.mnt);
+        let parent_mnt_to = (*mnt_to).mnt_parent;
+        if !mnt_has_parent(mnt_to)
+        {
+            return -EINVAL;
+        }
+        if !path_mounted(&to)
+        {
+            return -EINVAL;
+        }
+        if (*mnt_to).mnt.mnt_flags.contains(MntFlags::LOCKED)
+        {
+            return -EINVAL;
+        }
+
+        // if path_overmounted(from)
+        // {
+
+        // }
+
+        // let pcb = get_current_running_process();
+        // if addr_of!((*mnt_to).mnt) == (*pcb).
+
+        let mut p = mnt_from;
+        while mnt_has_parent(p) {
+            if p == mnt_to
+            {
+                return -EINVAL;
+            }
+            p = (*p).mnt_parent;
+        }
+
+        if propagation_would_overmount(parent_mnt_to, mnt_to, mp)
+        {
+            return -EINVAL;
+        }
+
+        if propagation_would_overmount(parent_mnt_to, mnt_from, mp)
+        {
+            return -EINVAL;
+        }
+        
+        0
+    }
+}
+
+// fn path_overmounted(path : &Path)
+// {
+//     if unlikely()
+// }
+
+// #[inline(always)]
+// fn check_mnt(mnt : *const Mount) -> bool
+// {
+//     unsafe 
+//     {
+//         (*mnt).mnt_ns == (*(*get_current_running_process()).nsproxy).mnt_ns
+//     }
+// }
+
+#[inline(always)]
+fn peers(m1 : *const Mount, m2 : *const Mount) -> bool
+{
+    unsafe {
+        return (*m1).mnt_group_id == (*m2).mnt_group_id && (*m1).mnt_group_id != 0;
+    }
+}
+
+fn propagation_would_overmount(from : *mut Mount, to : *mut Mount, mp : *mut Mountpoint) -> bool
+{
+    unsafe 
+    {
+        if !is_mnt_shared(from) { return false; }
+        if is_mnt_new(to) { return false; }
+        if (*to).mnt.mnt_root != (*mp).m_dentry { return false; }
+        let mut m = to;
+        while !m.is_null() {
+            if peers(from, m)
+            {
+                return true;
+            }
+            m = (*m).mnt_master;
+        }
+        false
+    }
+}
+
+fn unhash_mnt(mnt : *mut Mount)
+{
+    unsafe 
+    {
+        (*mnt).mnt_parent = null_mut();
+        (*mnt).mnt_child.delete();
+        M_HASH.remove(&(addr_of_mut!((*(*mnt).mnt_parent).mnt), (*mnt).mnt_mountpoint));
+        MP_HASH.remove(&(*mnt).mnt_mountpoint);
+        
+    }
+}
+
+fn attach_mnt(mnt : *mut Mount, parent : *mut Mount, mp : *mut Mountpoint, beneath : bool)
+{
+    unsafe 
+    {
+        if beneath
+        {
+            panic!();
+        }
+        else {
+            mnt_set_mountpoint(parent, mp, mnt);
+        }
+        __attach_mnt(mnt, (*mnt).mnt_parent);
+    }
+}
+
+fn __attach_mnt(mnt : *mut Mount, parent : *mut Mount)
+{
+    unsafe 
+    {
+        M_HASH.insert((addr_of_mut!((*parent).mnt), (*mnt).mnt_mountpoint), mnt);
+        (*mnt).mnt_child.tail_insert(&mut (*parent).mnt_mounts);
     }
 }

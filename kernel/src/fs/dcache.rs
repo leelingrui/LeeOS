@@ -1,9 +1,9 @@
-use core::{alloc::Layout, ffi::c_char, mem::ManuallyDrop, ptr::{self, addr_of_mut, addr_of, null_mut}, sync::atomic::AtomicI64};
+use core::{alloc::Layout, ffi::c_char, intrinsics::unlikely, mem::ManuallyDrop, ptr::{self, addr_of, addr_of_mut, null_mut}, sync::atomic::AtomicI64};
 use alloc::{collections::BTreeMap, string::{String, ToString}};
 
-use crate::kernel::{semaphore::RWLock, errno_base::{ENOSPC, err_ptr}};
+use crate::kernel::{errno_base::{err_ptr, EBUSY, ENOENT, ENOSPC}, semaphore::RWLock, Err};
 
-use super::{file::{FileMode, LogicalPart, FS}, inode::Inode};
+use super::{file::{FileMode, LogicalPart, FS}, inode::Inode, mount::{Mount, __lookup_mnt}, path::Path};
 
 
 pub type RevalidateFunc = fn(*mut DEntry, u32) -> i64;
@@ -85,7 +85,7 @@ pub struct DEntry
     pub d_flags : DEntryFlags,
     pub d_seq : RWLock,
     pub d_sb : *mut LogicalPart,
-    d_parent : *mut DEntry,
+    pub d_parent : *mut DEntry,
     pub d_inode : *mut Inode,
     d_children : BTreeMap<String, *mut DEntry>,
     pub d_ref : AtomicI64,
@@ -110,6 +110,35 @@ impl DEntry
             }
             dcache
         }
+    }
+
+    pub fn get_parent(&mut self) -> *mut Self
+    {
+        self.d_parent
+    }
+
+    pub fn set_mounted(&mut self) -> Err
+    {
+        unsafe {
+            let mut ret = -ENOENT;
+            if !self.d_parent.is_null()
+            {
+                if self.mountpoint()
+                {
+                    self.d_flags.insert(DEntryFlags::MOUNTED);
+                    ret = 0;
+                }
+                else {
+                    ret = -EBUSY;
+                }
+            }
+            ret
+        }
+    }
+
+    pub fn mountpoint(&self) -> bool
+    {
+        return !self.d_flags.contains(DEntryFlags::MOUNTED)
     }
 
     pub fn dget(&mut self) -> *mut Self
@@ -161,7 +190,7 @@ impl DEntry
          }
     }   
 
-    pub fn look_up(&mut self, name : &String) -> *mut DEntry
+    pub fn look_up(&mut self, name : &str, path : &mut Path) -> *mut DEntry
     {
         unsafe
         {
@@ -169,6 +198,20 @@ impl DEntry
             let result = match self.d_children.get(name) {
                 Some(child) => 
                 {
+                    path.dentry = *child;
+                    if (*path.dentry).d_flags.contains(DEntryFlags::MOUNTED)
+                    {
+                        let mount = __lookup_mnt(path.mnt, path.dentry);
+                        if unlikely(mount.is_null())
+                        {
+                            return null_mut();
+                         }
+                        path.dentry = (*mount).mnt.mnt_root;
+                        path.mnt = addr_of_mut!((*mount).mnt);
+                    }
+                    else {
+                        path.dentry = *child;                        
+                    }
                     *child
                 },
                 None => 
@@ -180,7 +223,21 @@ impl DEntry
                     }
                     match self.d_children.get(name)
                     {
-                        Some(child) => *child,
+                        Some(child) => 
+                        {
+                            path.dentry = *child;
+                            if (*path.dentry).d_flags.contains(DEntryFlags::MOUNTED)
+                            {
+                                let mount = __lookup_mnt(path.mnt, path.dentry);
+                                if unlikely(mount.is_null())
+                                {
+                                    return null_mut();
+                                }
+                                path.dentry = (*mount).mnt.mnt_root;
+                                path.mnt = addr_of_mut!((*mount).mnt);
+                            }
+                            *child
+                        },
                         None => null_mut()
                     }
                 }
@@ -203,6 +260,8 @@ impl DEntry
             (*child).name = name.to_string();
             self.d_children.insert((*child).name.to_string(), child);
             self.d_ref.fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+            (*child).d_sb = self.d_sb;
+            (*child).d_op = (*self.d_sb).s_d_op;
             self.d_seq.wrunlock();
             child
         }

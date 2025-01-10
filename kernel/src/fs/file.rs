@@ -1,4 +1,4 @@
-use core::{alloc::Layout, ffi::{c_char, c_void, CStr}, intrinsics::{unlikely, ptr_offset_from}, mem::size_of, ptr::{null_mut, addr_of_mut}, sync::atomic::{AtomicI64, AtomicU32}};
+use core::{alloc::Layout, ffi::{c_char, c_void, CStr}, intrinsics::{ptr_offset_from, unlikely}, mem::size_of, panic, ptr::{addr_of_mut, null_mut}, sync::atomic::{AtomicI64, AtomicU32}};
 
 use alloc::{alloc::dealloc, collections::{BTreeMap, LinkedList}, rc::Rc, string::String, sync::Arc, vec::Vec};
 use proc_macro::__init;
@@ -9,7 +9,7 @@ use super::{dcache::{DEntry, DEntryOperations}, ext4::{ext4_kill_sb, ext4_init_f
 pub static mut FS : FileSystem = FileSystem::new();
 pub static mut ROOTFS_FS_TYPE : FileSystemType = FileSystemType
 {
-    name: "rootfs",
+    name: "rootfs\0",
     next: null_mut(),
     init_fs_context: Some(shmem_init_fs_context),
     fs_supers: BTreeMap::new(),
@@ -343,7 +343,7 @@ impl FileSystem {
         unsafe
         {
             let mut next = null_mut();
-            let name_len = compiler_builtins::mem::strlen(pathname.cast());
+            let name_len = compiler_builtins::mem::strlen(pathname.cast()) + 1;
             let layout = Layout::from_size_align(name_len, 8).unwrap();
             let tmp_name = alloc::alloc::alloc(layout) as *mut c_char;
             compiler_builtins::mem::memcpy(tmp_name.cast(), pathname.cast(), name_len);
@@ -401,18 +401,15 @@ impl FileSystem {
             {
                 return -ENOMEM;
             }
-            let old = match (*(*(*parent.dentry).d_inode).i_operations).lookup
-            {
+            let old = match (*(*(*parent.dentry).d_inode).i_operations).lookup {
                 Some(lookup) => lookup((*parent.dentry).d_inode, child, 0),
-                None => return -EFAULT,
+                None => panic!("no lookup!"),
             };
-            
             if unlikely(!old.is_null())
             {
                 (*child).dput();
                 child = old;
             }
-
             Self::do_mknodat(idmap, (*parent.dentry).d_inode, child, mode, dev)
         }
     }
@@ -420,7 +417,7 @@ impl FileSystem {
     {
         unsafe
         {
-            if (*dir).i_mode.intersects(FileMode::IFDIR)
+            if !(*dir).i_mode.intersects(FileMode::IFDIR)
             {
                 return -EPERM;
             }
@@ -438,7 +435,7 @@ impl FileSystem {
     {
         unsafe
         {
-            if (*dir).i_mode.intersects(FileMode::IFDIR)
+            if !(*dir).i_mode.intersects(FileMode::IFDIR)
             {
                 return -EPERM;
             }
@@ -829,6 +826,7 @@ impl LogicalPart {
         {
             let ptr = alloc::alloc::alloc(Layout::new::<Self>()).cast();
             *ptr = Self { old_fs_type: FSType::None, logic_block_size: 0, logic_block_count: 0, inode_count: 0, s_dev: 0, data_map: BTreeMap::new(), s_d_op: null_mut(), s_root: null_mut(), sb_mount: null_mut(), s_sbi: null_mut(), fs_type: null_mut(), s_flags: 0, s_mounts: ListHead::empty() };
+            (*ptr).s_mounts.init();
             ptr
         }
     }

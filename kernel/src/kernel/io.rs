@@ -504,10 +504,8 @@ pub fn ide_init()
 {
     unsafe
     {
-        FS.mkdir("/dev\0".as_ptr().cast(), FileMode::IFDIR);
         ide_ctrl_init();
         FS.mkdir("/dev\0".as_ptr().cast(), FileMode::IFDIR);
-        ide_ctrl_init();
         ide_install();
     }
 }

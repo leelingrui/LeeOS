@@ -1,6 +1,6 @@
 use core::{ffi::{c_char, c_void, CStr}, ptr::null_mut, alloc::Layout};
 
-use alloc::{alloc::{alloc, dealloc}, collections::{BTreeMap, LinkedList}, vec::Vec};
+use alloc::{alloc::{alloc, dealloc}, collections::{BTreeMap, LinkedList}, string::String, vec::Vec};
 
 use crate::{fs::{ext4::Idx, dev, namei::sys_mknod, file::FileMode}, logk};
 
@@ -249,7 +249,7 @@ pub fn device_install(dev_no : DevT, ptr : *mut c_void, name : &CStr, parent : D
             Some(target_list) => 
             {
                 let minor = target_list.len() as DevT;
-                let device = Device {
+                let mut device = Device {
                     name: [0; DEV_NAME_LEN],
                     dev: mkdev(dev_no, minor),
                     flags,
@@ -257,6 +257,7 @@ pub fn device_install(dev_no : DevT, ptr : *mut c_void, name : &CStr, parent : D
                     ptr,
                     request_list: ListHead::empty(),                    
                 };
+                // device.request_list.init();
                 compiler_builtins::mem::memcpy(device.name.as_ptr() as *mut u8, name.as_ptr() as *const u8, name.to_str().unwrap().len());
                 target_list.push(device);
                 dev = mkdev(dev_no, minor)
@@ -266,7 +267,7 @@ pub fn device_install(dev_no : DevT, ptr : *mut c_void, name : &CStr, parent : D
             {
                 let mut target_list = Vec::<Device>::new();
                 let minor = target_list.len() as DevT;
-                let device = Device {
+                let mut device = Device {
                     name: [0; DEV_NAME_LEN],
                     dev: mkdev(dev_no, minor),
                     flags,
@@ -274,13 +275,15 @@ pub fn device_install(dev_no : DevT, ptr : *mut c_void, name : &CStr, parent : D
                     ptr,
                     request_list: ListHead::empty(),                    
                 };
+                // device.request_list.init();
                 compiler_builtins::mem::memcpy(device.name.as_ptr() as *mut u8, name.as_ptr() as *const u8, name.to_str().unwrap().len());
                 target_list.push(device);
                 DEVICES.insert(dev_no, target_list);
                 dev = mkdev(dev_no, minor)
             },
-        } 
-        sys_mknod(name.as_ptr(), device_type, dev);
+        }
+        let device_dest = String::from("/dev/") + name.to_str().unwrap();
+        sys_mknod(device_dest.as_ptr().cast(), device_type, dev);
         dev
     }
 

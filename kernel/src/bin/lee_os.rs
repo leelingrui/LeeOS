@@ -6,30 +6,12 @@
 #![feature(alloc_layout_extra)]
 #![feature(allocator_api)]
 #![no_std]
-use core::arch::global_asm;
 extern crate alloc;
-use core::panic::PanicInfo;
-
+use core::{arch::global_asm, panic::PanicInfo};
 use alloc::string::ToString;
-use lee_os::crypto::crc32c::{self, init_crc32};
-use lee_os::fs::file::init_filesystem;
-use lee_os::kernel::keyboard::keyboard_init;
-use lee_os::kernel::ramdisk::ramdisk_init;
-use lee_os::kernel::time::time_init;
-use lee_os::kernel::{console::console_init, global::gdt_init, interrupt::interrupt_init};
-use lee_os::fs::super_block::super_init;
-use lee_os::kernel::clock::clock_init;
-use lee_os::kernel::global::tss_init;
-use lee_os::kernel::interrupt;
-use lee_os::kernel::io::ide_init;
-use lee_os::kernel::process::process_init;
-use lee_os::kernel::syscall::syscall_init;
-use lee_os::kernel::fpu::fpu_init;
-use lee_os::mm::memory::init_memory;
-use lee_os::mm::shmem::init_shmem;
-use lee_os::{bochs_break, printk};
+use lee_os::{kernel::{clock::clock_init, console::console_init, global::{gdt_init, tss_init}, interrupt::{self, interrupt_init}, process::process_init, ramdisk::ramdisk_init}, mm::{memory::init_memory, shmem::init_shmem}, printk};
 use proc_macro::__init;
-use core::arch::asm;
+
 
 // use kernel::console::Console;
 global_asm!(include_str!("../kernel/entry.asm"));

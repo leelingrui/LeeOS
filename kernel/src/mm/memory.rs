@@ -105,7 +105,10 @@ unsafe impl GlobalAlloc for MemoryPool {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        
+        if ptr.is_null()
+        {
+            return;
+        }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
@@ -1275,7 +1278,7 @@ fn page_fault_page_not_exist(error : PageFaultErrorCode, vma : *mut VMAreaStruct
             if !file_t.is_null()
             {
                 let idx = (pg_fault_pos as u64 - (*vma).get_start() + (*vma).get_offset() as u64) / PAGE_SIZE as u64;
-                let buff = FS.read_file_logic_block((*vma).get_file(), idx as Idx);
+                let buff = FS.read_file_logic_block( (*vma).get_file(), idx as Idx);
                 if buff.is_null()
                 {
                     panic!("unable read file block");
@@ -1287,11 +1290,11 @@ fn page_fault_page_not_exist(error : PageFaultErrorCode, vma : *mut VMAreaStruct
                 link_user_page(pg_fault_pos, (*vma).get_prot());
             }
         }
-        if pg_fault_pos == null()
-        {
-            let new_page = MEMORY_POOL.alloc_frames(1);
-            link_pages(null_mut(), virt2phys(new_page), true, true);
-        }
+        // if pg_fault_pos == null()
+        // {
+        //     let new_page = MEMORY_POOL.alloc_frames(1);
+        //     link_pages(null_mut(), virt2phys(new_page), true, true);
+        // }
     }
 }
 

@@ -9,7 +9,7 @@ KERNEL_FILES:=$(KERNEL_SRC)/lib.rs $(KERNEL_SRC)/kernel/console.rs $(KERNEL_SRC)
 	$(KERNEL_SRC)/fs/ext4.rs $(KERNEL_SRC)/fs/super_block.rs $(KERNEL_SRC)/kernel/device.rs $(KERNEL_SRC)/kernel/buffer.rs $(KERNEL_SRC)/kernel/execve.rs $(KERNEL_SRC)/kernel/fork.rs \
 	$(KERNEL_SRC)/kernel/keyboard.rs $(KERNEL_SRC)/kernel/rtc.rs $(KERNEL_SRC)/kernel/input.rs $(KERNEL_SRC)/mm/shmem.rs $(KERNEL_SRC)/kernel/errno_base.rs $(KERNEL_SRC)/fs/dcache.rs $(KERNEL_SRC)/fs/fs.rs\
 	$(KERNEL_SRC)/fs/mnt_idmapping.rs $(KERNEL_SRC)/fs/libfs.rs $(KERNEL_SRC)/fs/fs_context.rs $(KERNEL_SRC)/fs/path.rs $(KERNEL_SRC)/fs/ns_common.rs $(KERNEL_SRC)/fs/ida.rs \
-	$(KERNEL_SRC)/fs/mount.rs
+	$(KERNEL_SRC)/fs/mount.rs $(KERNEL_SRC)/fs/inode.rs
 MACRO_SRC:=./proc_macro/src
 MACRO_FILES:=$(MACRO_SRC)/lib.rs $(MACRO_SRC)/__init.rs $(MACRO_SRC)/__exit.rs
 
@@ -45,7 +45,7 @@ $(BUILD)/x86_64-unknown-leeos/debug/liblib.rlib: $(LIB_FILES)
 $(BUILD)/x86_64-unknown-leeos/debug/liblib.so: $(LIB_FILES) 
 	$(MAKE) -C ./lib build_lib
 
-$(BUILTIN_APP): $(BUILTIN_APP_FILES) $(BUILD)/x86_64-unknown-leeos/debug/liblib.so
+$(BUILTIN_APP): $(BUILTIN_APP_FILES) $(BUILD)/x86_64-unknown-leeos/debug/liblib.so ./builtins/.cargo/config.toml
 	$(MAKE) -C ./builtins build_builtins
 
 .PHONY: test

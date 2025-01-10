@@ -274,6 +274,7 @@ impl KmemCache {
     pub fn create_cache(name : *const str, size : u32, align : u32, ctor : *mut extern fn(*mut c_void), flags : page::Pageflags) -> KmemCache
     {
         let mut new_slub = KmemCache { flags, min_partial: 0, size, object_size: 0, reciprocal_size: 0, offset: 0, allocflags: page::GFP::empty(), refcount: 1, ctor, inuse: 0, align, red_left_pad: 0, name, list: ListHead::empty(), node: [KmemCacheNode::new(); MAX_NUMNODES] };
+        new_slub.list.init();
         new_slub.kmem_cache_open(page::GFP::KERNEL);
         new_slub
     }
@@ -311,7 +312,10 @@ impl KmemCache {
             // link to partial list
             let nid = (*new_slab).slab_nid();
             let next = self.node[nid].partial.next as *mut Slab;
-            (*next).slab_list.prev = new_slab as *mut ListHead;
+            if !next.is_null()
+            {
+                (*next).slab_list.prev = new_slab as *mut ListHead;
+            }
             (*new_slab).slab_list.next = next as *mut ListHead;
             self.node[nid].partial.next = new_slab as *mut ListHead;
             self.node[nid].nr_partial += num_object as u64 + 1;

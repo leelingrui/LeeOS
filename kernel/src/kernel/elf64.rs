@@ -1,4 +1,4 @@
-use core::{ffi::{c_char, c_void}, mem::size_of, ptr::null_mut, iter::empty};
+use core::{alloc::Layout, ffi::{c_char, c_void}, iter::empty, mem::size_of, ptr::null_mut};
 
 use crate::{fs::file::{File, EOF, FS}, mm::{mmap::{sys_mmap, __do_mmap}, memory::PAGE_SIZE, mm_type::MmapType}};
 
@@ -314,15 +314,16 @@ pub fn load_elf64(file_t : *mut File) -> i64
 {
     unsafe
     {
-        let ehdr = null_mut() as *mut Elf64Ehdr;
-        FS.read_file(file_t, null_mut(), size_of::<Elf64Ehdr>(), 0);
+        let ehdr = alloc::alloc::alloc(Layout::new::<Elf64Ehdr>()) as *mut Elf64Ehdr;
+        FS.read_file(file_t, ehdr.cast(), size_of::<Elf64Ehdr>(), 0);
         if elf64_validate(ehdr)
         {
             return EOF;
         }
-        let mut phdr = (*ehdr).e_phoff as *mut Elf64Phdr;
+        let mut phdr = alloc::alloc::alloc(Layout::from_size_align(size_of::<Elf64Phdr>() * (*ehdr).e_phnum as usize, 8).unwrap()) as *mut Elf64Phdr;
         // __do_mmap(null_mut(), (*ehdr).e_phnum as usize * (*ehdr).e_phentsize as usize + size_of::<Elf64Ehdr>(), MmapType::PROT_KERNEL | MmapType::PROT_READ, MmapType::MAP_PRIVATE, null_mut(), 0);
-        FS.read_file(file_t, (*ehdr).e_phoff as *mut c_void, (*ehdr).e_phnum as usize * (*ehdr).e_phentsize as usize, (*ehdr).e_phoff as Off);
+        FS.read_file(file_t, phdr.cast(), (*ehdr).e_phnum as usize * (*ehdr).e_phentsize as usize, (*ehdr).e_phoff as Off);
+        let first_pt_load = true;
         let mut var = 0;
         while var < (*ehdr).e_phnum {
             match (*phdr).p_type {
@@ -338,6 +339,8 @@ pub fn load_elf64(file_t : *mut File) -> i64
             phdr = phdr.offset(1);
             var += 1;
         }
+        alloc::alloc::dealloc(phdr.cast(), Layout::from_size_align(size_of::<Elf64Phdr>() * (*ehdr).e_phnum as usize, 8).unwrap());
+
         (*ehdr).e_entry as i64
     }
 }
@@ -370,7 +373,7 @@ fn load_segment64(elf64_phdr : *mut Elf64Phdr, file_t : *mut File) -> bool
         let vma;
         if (*elf64_phdr).p_vaddr == 0
         {
-            FS.read_file(file_t, null_mut(), (*elf64_phdr).p_filesz as usize, (*elf64_phdr).p_offset as usize);
+            // FS.read_file(file_t, null_mut(), (*elf64_phdr).p_filesz as usize, (*elf64_phdr).p_offset as usize);
             return true;
         }
         if (*elf64_phdr).p_filesz == 0

@@ -191,8 +191,8 @@ impl MMStruct {
             self.mmap_cache = null_mut();
             self.mm_rb.clear();
             let mut vma_ptr = self.mmap;
+            self.mmap = null_mut();
             while !vma_ptr.is_null() {
-
                 let prev_vma = vma_ptr;
                 vma_ptr = (*vma_ptr).get_next();
                 Self::free_vma(prev_vma);
@@ -216,7 +216,7 @@ impl MMStruct {
             }
             let mut last_ptr: *mut VMAreaStruct = null_mut();
             let mut vm_ptr = self.mmap;
-            if (*vm_ptr).get_start() > start as u64
+            if vm_ptr.is_null() || (*vm_ptr).get_start() > start as u64
             {
                 return self.create_new_mem_area(start as u64, start as u64 + length as u64);
             }
@@ -300,7 +300,8 @@ impl MMStruct {
         unsafe
         {
             let vma_ptr = MEMORY_POOL.alloc(Layout::new::<VMAreaStruct>()) as *mut VMAreaStruct;
-            (*vma_ptr) = VMAreaStruct::new(start, end, self as *mut MMStruct, MmapType::empty());
+            vma_ptr.write(VMAreaStruct::new(start, end, self as *mut MMStruct, MmapType::empty()));
+            // (*vma_ptr).list.init();
             self.insert_vma(vma_ptr);
             vma_ptr
         }
@@ -331,8 +332,8 @@ impl MMStruct {
                             Self::free_vma(new_vma);
                             new_vma = vma_ptr;
                         }
-                        vma_ptr = (*vma_ptr).get_prev();
-                        if vma_ptr.is_null()
+                        let p_vma_ptr = (*vma_ptr).get_prev();
+                        if p_vma_ptr.is_null()
                         {
                             self.mmap = new_vma;
                             (*new_vma).set_next(vma_ptr);

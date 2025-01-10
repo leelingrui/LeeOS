@@ -20,7 +20,7 @@ const F_SEAL_SEAL : u32 = 1;
 
 static mut SHMEM_FS_TYPE : FileSystemType = FileSystemType
 {
-    name : "shmem",
+    name : "shmem\0",
     next : null_mut(),
     init_fs_context : Some(shmem_init_fs_context),
     fs_supers : BTreeMap::new(),
@@ -153,7 +153,7 @@ pub fn init_shmem()
     unsafe
     {
         SHMEM_INODE_CACHEP = alloc(Layout::new::<KmemCache>()) as *mut KmemCache;
-        (*SHMEM_INODE_CACHEP) = KmemCache::create_cache("shmem_inode_cache", size_of::<KmemCache>() as u32, size_of::<KmemCache>() as u32, null_mut(), Pageflags::empty());
+        (*SHMEM_INODE_CACHEP) = KmemCache::create_cache("shmem_inode_cache\0", size_of::<KmemCache>() as u32, size_of::<KmemCache>() as u32, null_mut(), Pageflags::empty());
         (*SHMEM_INODE_CACHEP).link_to_cache_list();
         DEV_FS = ShmemSbInfo::new();
         FS.register_filesystem(addr_of_mut!(SHMEM_FS_TYPE));
@@ -325,6 +325,7 @@ impl ShmemSbInfo
         {
             let sbi = alloc(Layout::new::<Self>()) as *mut Self;
             (*sbi) = Self { max_blocks: Self::default_max_blocks(), used_blocks: 0, max_inodes: Self::default_max_inodes(), free_ispace: Self::default_max_inodes() as i64 * 1024, stat_lock: SpinLock::new(1), mode: 0, uid: 0, gid: 0, full_inums: false, noswap: true, next_ino: 0, shrinklist_lock: SpinLock::new(1), shrinklist: ListHead::empty(), shrinklist_len: 0, qlimits: ShmemQuotaLimits::empty() };
+            (*sbi).shrinklist.init();
             sbi
         }
     }
@@ -337,6 +338,7 @@ fn __shmem_get_inode(idmap : *mut MntIdmap, lp : *mut LogicalPart, dir : *mut In
         let inode;
         let sbi = (*lp).s_sbi as *mut ShmemSbInfo;
         inode = Inode::new(null(), FSPermission::all());
+        (*inode).i_mode = mode.clone();
         if (inode.is_null())
         {
             return err_ptr(-ENOSPC);
@@ -356,11 +358,11 @@ fn __shmem_get_inode(idmap : *mut MntIdmap, lp : *mut LogicalPart, dir : *mut In
         match mode & FileMode::IFMT
          {
             FileMode::IFREG => 
-             {
+            {
                 (*inode).i_operations = addr_of!(SHMEM_INODE_OPERATIONS);
             },
             FileMode::IFDIR => 
-             {
+            {
                 (*inode).i_operations = addr_of!(SHMEM_DIR_INODEOPERATIONS);
             },
             val => 

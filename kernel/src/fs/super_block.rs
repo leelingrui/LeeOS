@@ -221,5 +221,5 @@ pub fn mount_block_root(root_device_name : *const c_char)
 {
     sys_mknod("/dev/root\0".as_ptr().cast(), FileMode::IFBLK, ROOT_DEV);
     mount_root_generic("/dev/root\0".as_ptr().cast(), root_device_name, ROOT_MOUNTFLAGS); 
-    sys_mount("..\0".as_ptr().cast(), ".\0".as_ptr().cast(), null(), MS_MOVE, null());
+    sys_mount(".\0".as_ptr().cast(), "/\0".as_ptr().cast(), null(), MS_MOVE, null());
 }

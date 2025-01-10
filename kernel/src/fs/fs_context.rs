@@ -246,7 +246,7 @@ impl FsContext
             {
                 return err_ptr(-ENOMEM);
             }
-            (*fc) = Self { ops: null_mut(), mutex: Semaphore::new(1), source: Arc::new(String::new()), root: null_mut(), fs_type, sb_flags, sb_flags_mask, purpose, need_free: false, fs_private : null_mut() };
+            fc.write(Self { ops: null_mut(), mutex: Semaphore::new(1), source: Arc::new(String::new()), root: null_mut(), fs_type, sb_flags, sb_flags_mask, purpose, need_free: false, fs_private : null_mut() });
             match purpose {
                 FsContextPurpose::FsContextForMount => 
                 {

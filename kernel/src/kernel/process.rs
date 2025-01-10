@@ -248,17 +248,20 @@ impl ProcessControlBlock {
 
     pub fn insert_to_fd(&mut self, file_t : *mut File) -> Fd
     {
-        let mut var = 0;
-        while var < self.files.len() {
-            if unlikely(self.files[var] == null_mut())
-            {
-                self.files[var] = file_t;
-                return var;
+        unsafe 
+        {
+            let mut var = 0;
+            while var < self.files.len() {
+                if unlikely(self.files[var] == null_mut())
+                {
+                    self.files[var] = file_t;
+                    return var;
+                }
+                var += 1;
             }
-            var += 1;
+            self.files.push(file_t);
+            return var;
         }
-        self.files.push(file_t);
-        return var;
     }
 
     pub fn get_iroot(&mut self) -> Path

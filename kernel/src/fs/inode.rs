@@ -134,7 +134,7 @@ impl Inode {
             match (*self.logical_part_ptr).old_fs_type {
                 FSType::None => panic!("unsupport fs\n"),
                 FSType::Ext4 => ext4_load_all_entries(&mut *dentry, self),
-                FSType::Shmem => unimplemented!(),
+                FSType::Shmem => { },
             }
         }
 

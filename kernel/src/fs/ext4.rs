@@ -66,7 +66,7 @@ pub struct Ext4GroupDescInfo
 
 pub static mut EXT4_FS_TYPE : FileSystemType = FileSystemType
 {
-    name: "ext4",
+    name: "ext4\0",
     next: null_mut(),
     init_fs_context: Some(ext4_init_fs_context),
     fs_supers: BTreeMap::new(),
@@ -647,7 +647,7 @@ pub fn ext4_get_logic_block_idx(logical_part : &mut LogicalPart, inode : *mut In
                 while var < 4 {
                     if (*block_desc_node).node[var].leaf_node.ee_block as u64 <= idx && ((*block_desc_node).node[var].leaf_node.ee_block as u64 + (*block_desc_node).node[var].leaf_node.ee_len as u64) > idx
                     {
-                        return (*block_desc_node).node[var].leaf_node.ee_start_lo as Idx + (((*block_desc_node).node[var].leaf_node.ee_start_hi as Idx) << 32);
+                        return (*block_desc_node).node[var].leaf_node.ee_start_lo as Idx + (((*block_desc_node).node[var].leaf_node.ee_start_hi as Idx) << 32) + idx - (*block_desc_node).node[var].leaf_node.ee_block as Idx;
                     }
                     var += 1;
                 }
@@ -678,7 +678,7 @@ pub fn ext4_get_logic_block_idx(logical_part : &mut LogicalPart, inode : *mut In
                 }
                 while ((*extent_block).node[var].leaf_node.ee_block as Idx + (*extent_block).node[var].leaf_node.ee_len as Idx) > idx {
                     logical_part.release_buffer(buff, idx);
-                    return (*extent_block).node[var].leaf_node.ee_start_lo as Idx + (((*extent_block).node[var].leaf_node.ee_start_hi as Idx) << 32);
+                    return (*extent_block).node[var].leaf_node.ee_start_lo as Idx + (((*extent_block).node[var].leaf_node.ee_start_hi as Idx) << 32) + idx - (*extent_block).node[var].leaf_node.ee_block as Idx;
                 }
             }
         }
